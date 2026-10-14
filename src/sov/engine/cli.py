@@ -12,16 +12,18 @@ def main() -> int:
     parser.add_argument("cases", type=Path, help="Папка входных JSON-кейсов")
     parser.add_argument("results", type=Path, help="Папка результатов sov-result/1")
     args = parser.parse_args()
+    if args.cases.resolve() == args.results.resolve():
+        parser.error("Папка результатов должна отличаться от папки исходных кейсов")
     paths = sorted(args.cases.glob("*.json"))
     if not paths:
         parser.error(f"Нет JSON-кейсов: {args.cases}")
     results = []
     for path in paths:
-        case = json.loads(path.read_text(encoding="utf-8"))
         try:
+            case = json.loads(path.read_text(encoding="utf-8-sig"))
             results.append((path.name, calculate_case(case)))
-        except NotImplementedError as error:
-            parser.exit(2, f"{error}\n")
+        except (ValueError, KeyError, TypeError, OSError) as error:
+            parser.exit(2, f"Ошибка в кейсе {path.name}: {error}\n")
     args.results.mkdir(parents=True, exist_ok=True)
     for name, result in results:
         (args.results / name).write_text(
