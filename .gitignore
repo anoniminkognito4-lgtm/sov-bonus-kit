@@ -1,0 +1,24 @@
+# окружение
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+
+# результаты расчётов и стенда
+build/
+*.sqlite
+*.db
+
+# реальные данные сюда не кладутся; на всякий случай
+*.xlsm
+*.xlsb
+data/real/
+~$*
+
+# локальные инструменты и кеш uv
+.tools/
+.uv-cache/
+*.egg-info/
+.Rhistory

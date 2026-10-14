@@ -1,0 +1,17 @@
+{
+ "doc": "Загрузка МП ОУП: норма 2 проекта; один проект — 100%, два и больше — по 50% на проект (ТЗ 6.2, сл. 20)",
+ "cases": [
+  {
+   "projects": 1,
+   "expected_per_project": 1.0
+  },
+  {
+   "projects": 2,
+   "expected_per_project": 0.5
+  },
+  {
+   "projects": 3,
+   "expected_per_project": 0.5
+  }
+ ]
+}

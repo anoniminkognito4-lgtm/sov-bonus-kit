@@ -1,0 +1,4 @@
+﻿tab_no;rank;project_code;queue;class;area_k_m2;stage;extra_objects;is_queue;is_logistics;approved_date;approved_by
+T9001;1;TP-RP-A;1;Элит;150;1;0;Нет;Нет;2026-01-15;ВП БПП (условно)
+T9001;1;TP-RP-B;1;Премиум;70;4;0;Нет;Нет;2026-01-15;ВП БПП (условно)
+T9002;2;TP-RP-C;1;Комфорт;90;4;1;Нет;Нет;2026-01-20;ДП (условно)

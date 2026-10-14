@@ -1,0 +1,110 @@
+{
+ "doc": "Множитель аванса за промежуточную веху без доли авансов, веса и множителя БС: min((1 + отклонение/100) × X, потолок), X = 1 (РУПК), К фин (КУПК), (KPI − 0,5) × 2 (МП); потолок 1,5 × X; при просрочке 100 дней и больше 0. Отклонение = план (или инд. срок) − факт. CALC_RULES §4",
+ "cases": [
+  {
+   "category": "РУПК",
+   "deviation_days": 90,
+   "k_fin": null,
+   "kpi": null,
+   "expected": 1.5
+  },
+  {
+   "category": "РУПК",
+   "deviation_days": 50,
+   "k_fin": null,
+   "kpi": null,
+   "expected": 1.5
+  },
+  {
+   "category": "РУПК",
+   "deviation_days": 20,
+   "k_fin": null,
+   "kpi": null,
+   "expected": 1.2
+  },
+  {
+   "category": "РУПК",
+   "deviation_days": 0,
+   "k_fin": null,
+   "kpi": null,
+   "expected": 1.0
+  },
+  {
+   "category": "РУПК",
+   "deviation_days": -50,
+   "k_fin": null,
+   "kpi": null,
+   "expected": 0.5
+  },
+  {
+   "category": "РУПК",
+   "deviation_days": -99,
+   "k_fin": null,
+   "kpi": null,
+   "expected": 0.010000000000000009
+  },
+  {
+   "category": "РУПК",
+   "deviation_days": -100,
+   "k_fin": null,
+   "kpi": null,
+   "expected": 0.0
+  },
+  {
+   "category": "РУПК",
+   "deviation_days": -120,
+   "k_fin": null,
+   "kpi": null,
+   "expected": 0.0
+  },
+  {
+   "category": "КУПК",
+   "deviation_days": 90,
+   "k_fin": 1.2,
+   "kpi": null,
+   "expected": 1.7999999999999998
+  },
+  {
+   "category": "КУПК",
+   "deviation_days": 20,
+   "k_fin": 1.2,
+   "kpi": null,
+   "expected": 1.44
+  },
+  {
+   "category": "КУПК",
+   "deviation_days": 0,
+   "k_fin": 1.2,
+   "kpi": null,
+   "expected": 1.2
+  },
+  {
+   "category": "КУПК",
+   "deviation_days": -30,
+   "k_fin": 1.2,
+   "kpi": null,
+   "expected": 0.84
+  },
+  {
+   "category": "КУПК",
+   "deviation_days": 90,
+   "k_fin": 0.8,
+   "kpi": null,
+   "expected": 1.2000000000000002
+  },
+  {
+   "category": "МП",
+   "deviation_days": 0,
+   "k_fin": null,
+   "kpi": 0.8,
+   "expected": 0.6000000000000001
+  },
+  {
+   "category": "МП",
+   "deviation_days": 60,
+   "k_fin": null,
+   "kpi": 0.8,
+   "expected": 0.9000000000000001
+  }
+ ]
+}

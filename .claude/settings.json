@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(//**/*.xlsm)",
+      "Read(//**/*.xlsb)",
+      "Edit(/reference/**)",
+      "Edit(/tests/golden/**)"
+    ],
+    "allow": [
+      "Bash(uv sync*)",
+      "Bash(uv run pytest*)",
+      "Bash(uv run ruff*)",
+      "Bash(uv run python tools/compare_golden.py*)",
+      "Bash(python3 tools/compare_golden.py*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)"
+    ]
+  }
+}

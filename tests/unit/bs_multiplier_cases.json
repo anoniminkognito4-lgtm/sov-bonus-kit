@@ -1,0 +1,59 @@
+{
+ "doc": "Множитель перевыставления БС: 90% + 10% × min(1, max(0, (доля − 40%) × 2)); только КУПК и РУПК при включённом БС. ТЗ 6.6, CALC_RULES §6",
+ "cases": [
+  {
+   "category": "КУПК",
+   "bs_enabled": true,
+   "share": 0.95,
+   "expected": 1.0
+  },
+  {
+   "category": "КУПК",
+   "bs_enabled": true,
+   "share": 0.9,
+   "expected": 1.0
+  },
+  {
+   "category": "РУПК",
+   "bs_enabled": true,
+   "share": 0.65,
+   "expected": 0.9500000000000001
+  },
+  {
+   "category": "РУПК",
+   "bs_enabled": true,
+   "share": 0.6,
+   "expected": 0.9400000000000001
+  },
+  {
+   "category": "КУПК",
+   "bs_enabled": true,
+   "share": 0.4,
+   "expected": 0.9
+  },
+  {
+   "category": "КУПК",
+   "bs_enabled": true,
+   "share": 0.3,
+   "expected": 0.9
+  },
+  {
+   "category": "КУПК (РП/ЗРП)",
+   "bs_enabled": true,
+   "share": 0.3,
+   "expected": 1.0
+  },
+  {
+   "category": "МП",
+   "bs_enabled": true,
+   "share": 0.3,
+   "expected": 1.0
+  },
+  {
+   "category": "РУПК",
+   "bs_enabled": false,
+   "share": 0.3,
+   "expected": 1.0
+  }
+ ]
+}

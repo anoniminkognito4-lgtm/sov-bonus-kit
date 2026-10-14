@@ -1,0 +1,103 @@
+{
+ "doc": "Участие промежуточных вех и вес: веха участвует, если (инд. срок или план) >= старт + 60 дней; правило не применяется, если сотрудник перешёл из предыдущего этапа и его старт = началу нового этапа. Вес = 1 / число участвующих вех. individual: {индекс вехи: инд. срок}. CALC_RULES §3",
+ "cases": [
+  {
+   "start": "2025-11-01",
+   "continues_from_prev_stage": false,
+   "new_stage_start": null,
+   "plans": [
+    "2025-06-30",
+    "2025-09-30",
+    "2025-12-15",
+    "2026-03-31",
+    "2026-05-29",
+    "2026-07-31"
+   ],
+   "individual": {},
+   "participates": [
+    false,
+    false,
+    false,
+    true,
+    true,
+    true
+   ],
+   "weight": 0.3333333333333333,
+   "why": "T07: план до старта + 60 дней"
+  },
+  {
+   "start": "2025-11-01",
+   "continues_from_prev_stage": false,
+   "new_stage_start": null,
+   "plans": [
+    "2025-12-30",
+    "2025-12-31",
+    "2026-03-31",
+    "2026-06-30"
+   ],
+   "individual": {},
+   "participates": [
+    false,
+    true,
+    true,
+    true
+   ],
+   "weight": 0.3333333333333333,
+   "why": "T22: старт + 60 = 31.12.2025 участвует"
+  },
+  {
+   "start": "2025-04-01",
+   "continues_from_prev_stage": true,
+   "new_stage_start": "2025-04-01",
+   "plans": [
+    "2025-05-20",
+    "2025-09-30",
+    "2025-12-15"
+   ],
+   "individual": {},
+   "participates": [
+    true,
+    true,
+    true
+   ],
+   "weight": 0.3333333333333333,
+   "why": "T08: переход из предыдущего этапа, старт = началу этапа"
+  },
+  {
+   "start": "2025-04-02",
+   "continues_from_prev_stage": true,
+   "new_stage_start": "2025-04-01",
+   "plans": [
+    "2025-05-20",
+    "2025-09-30",
+    "2025-12-15"
+   ],
+   "individual": {},
+   "participates": [
+    false,
+    true,
+    true
+   ],
+   "weight": 0.5,
+   "why": "T08: старт на день позже начала этапа -> правило 60 дней"
+  },
+  {
+   "start": "2025-11-01",
+   "continues_from_prev_stage": false,
+   "new_stage_start": null,
+   "plans": [
+    "2025-12-15",
+    "2026-03-31"
+   ],
+   "individual": {
+    "0": "2026-01-15"
+   },
+   "participates": [
+    true,
+    true
+   ],
+   "weight": 0.5,
+   "why": "индивидуальный срок позже старта + 60 -> веха участвует"
+  }
+ ]
+}

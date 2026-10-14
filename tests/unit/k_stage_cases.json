@@ -1,0 +1,37 @@
+{
+ "doc": "К срока этапа (ключевая веха): 1 + отклонение/100, без потолка, не меньше 0. Опережение больше 100 дней -> статус «требует решения» (101 да, 100 нет). CALC_RULES §4",
+ "cases": [
+  {
+   "deviation_days": 138,
+   "expected": 2.38
+  },
+  {
+   "deviation_days": 101,
+   "expected": 2.01
+  },
+  {
+   "deviation_days": 100,
+   "expected": 2.0
+  },
+  {
+   "deviation_days": 20,
+   "expected": 1.2
+  },
+  {
+   "deviation_days": 0,
+   "expected": 1.0
+  },
+  {
+   "deviation_days": -30,
+   "expected": 0.7
+  },
+  {
+   "deviation_days": -90,
+   "expected": 0.09999999999999998
+  },
+  {
+   "deviation_days": -120,
+   "expected": 0.0
+  }
+ ]
+}

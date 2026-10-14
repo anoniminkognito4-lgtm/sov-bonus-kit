@@ -1,0 +1,494 @@
+{
+ "schema": "sov-result/1",
+ "id": "T05",
+ "variant": "spec",
+ "title": "Потолок +50%",
+ "overrides_applied": [],
+ "blocking_problems": [],
+ "employees": [
+  {
+   "tab_no": "T0008",
+   "fio": "Тестов Восемь",
+   "category": "КУПК",
+   "role": "другая",
+   "start": "2025-04-01",
+   "leave_date": null,
+   "duration_days": 548,
+   "pb": 3603287.67123288,
+   "advance_share": 0.67,
+   "advance_pool": 2414202.73972603,
+   "final_pool": 1189084.93150685,
+   "k_fin": 1.2,
+   "k_bs": 1.0,
+   "milestones": [
+    {
+     "name": "Мотивационная веха 1",
+     "plan": "2025-06-30",
+     "individual_plan": null,
+     "fact": "2025-06-30",
+     "deviation_days": 0,
+     "weight": 0.166666666666667,
+     "amount": 482840.547945206,
+     "pay_date": "2025-08-08",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 2",
+     "plan": "2025-09-30",
+     "individual_plan": null,
+     "fact": "2025-09-30",
+     "deviation_days": 0,
+     "weight": 0.166666666666667,
+     "amount": 482840.547945206,
+     "pay_date": "2025-11-10",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 3",
+     "plan": "2025-12-15",
+     "individual_plan": null,
+     "fact": "2025-09-16",
+     "deviation_days": 90,
+     "weight": 0.166666666666667,
+     "amount": 724260.821917808,
+     "pay_date": "2025-11-10",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 4",
+     "plan": "2026-03-31",
+     "individual_plan": null,
+     "fact": "2026-03-31",
+     "deviation_days": 0,
+     "weight": 0.166666666666667,
+     "amount": 482840.547945206,
+     "pay_date": "2026-05-08",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 5",
+     "plan": "2026-05-29",
+     "individual_plan": "2026-05-29",
+     "fact": "2026-02-28",
+     "deviation_days": 90,
+     "weight": 0.166666666666667,
+     "amount": 724260.821917808,
+     "pay_date": "2026-05-08",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 6",
+     "plan": "2026-07-31",
+     "individual_plan": null,
+     "fact": "2026-07-31",
+     "deviation_days": 0,
+     "weight": 0.166666666666667,
+     "amount": 482840.547945206,
+     "pay_date": "2026-11-10",
+     "calc_status": "рассчитано"
+    }
+   ],
+   "final": {
+    "plan": "2026-09-30",
+    "individual_plan": null,
+    "fact": "2026-09-30",
+    "deviation_days": 0,
+    "kind": "финальный бонус",
+    "k_stage": 1.0,
+    "amount": 944061.369863013,
+    "raw_amount": 944061.3698630161,
+    "pay_date": "2026-11-10",
+    "calc_status": "рассчитано"
+   },
+   "leave": null,
+   "interest": {
+    "rows": [
+     {
+      "milestone": "Мотивационная веха 1",
+      "advance": 482840.547945206,
+      "pay_date": "2025-08-08",
+      "deferred": 237816.98630137,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "50%",
+        "days": 459,
+        "interest": 23925.0403753049
+       },
+       {
+        "part": "25% (1)",
+        "days": 551,
+        "interest": 14360.23665228
+       },
+       {
+        "part": "25% (2)",
+        "days": 640,
+        "interest": 16679.7667104522
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 2",
+      "advance": 482840.547945206,
+      "pay_date": "2025-11-10",
+      "deferred": 237816.98630137,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "50%",
+        "days": 365,
+        "interest": 19025.3589041096
+       },
+       {
+        "part": "25% (1)",
+        "days": 457,
+        "interest": 11910.3959166823
+       },
+       {
+        "part": "25% (2)",
+        "days": 546,
+        "interest": 14229.9259748546
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 3",
+      "advance": 724260.821917808,
+      "pay_date": "2025-11-10",
+      "deferred": 356725.479452055,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "50%",
+        "days": 365,
+        "interest": 28538.0383561644
+       },
+       {
+        "part": "25% (1)",
+        "days": 457,
+        "interest": 17865.5938750235
+       },
+       {
+        "part": "25% (2)",
+        "days": 546,
+        "interest": 21344.8889622819
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 4",
+      "advance": 482840.547945206,
+      "pay_date": "2026-05-08",
+      "deferred": 237816.98630137,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "50%",
+        "days": 186,
+        "interest": 9695.11440045037
+       },
+       {
+        "part": "25% (1)",
+        "days": 278,
+        "interest": 7245.27366485269
+       },
+       {
+        "part": "25% (2)",
+        "days": 367,
+        "interest": 9564.80372302496
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 5",
+      "advance": 724260.821917808,
+      "pay_date": "2026-05-08",
+      "deferred": 356725.479452055,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "50%",
+        "days": 186,
+        "interest": 14542.6716006755
+       },
+       {
+        "part": "25% (1)",
+        "days": 278,
+        "interest": 10867.910497279
+       },
+       {
+        "part": "25% (2)",
+        "days": 367,
+        "interest": 14347.2055845374
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 6",
+      "advance": 482840.547945206,
+      "pay_date": "2026-11-10",
+      "deferred": 237816.98630137,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "50%",
+        "days": 0,
+        "interest": 0.0
+       },
+       {
+        "part": "25% (1)",
+        "days": 92,
+        "interest": 2397.71646462751
+       },
+       {
+        "part": "25% (2)",
+        "days": 181,
+        "interest": 4717.24652279977
+       }
+      ]
+     }
+    ],
+    "total": 241257.18818540062
+   },
+   "payouts": [
+    {
+     "part": "50%",
+     "event_date": "2026-09-30",
+     "pay_date": "2026-11-10",
+     "bonus": 472030.6849315065,
+     "interest": 95726.22363670477,
+     "amount": 567756.908568212,
+     "calc_status": "рассчитано",
+     "npv_checkpoint": 6000000000
+    },
+    {
+     "part": "25% (1)",
+     "event_date": "2026-12-29",
+     "pay_date": "2027-02-10",
+     "bonus": 236015.34246575326,
+     "interest": 64647.127070745,
+     "amount": 300662.469536498,
+     "calc_status": "рассчитано",
+     "npv_checkpoint": 6000000000
+    },
+    {
+     "part": "25% (2)",
+     "event_date": "2027-03-29",
+     "pay_date": "2027-05-10",
+     "bonus": 236015.34246575326,
+     "interest": 80883.83747795083,
+     "amount": 316899.179943704,
+     "calc_status": "рассчитано",
+     "npv_checkpoint": 6000000000
+    }
+   ],
+   "total_payable": 4565202.393664854
+  },
+  {
+   "tab_no": "T0009",
+   "fio": "Тестова Девять",
+   "category": "РУПК",
+   "role": "другая",
+   "start": "2025-04-01",
+   "leave_date": null,
+   "duration_days": 548,
+   "pb": 3603287.67123288,
+   "advance_share": 0.67,
+   "advance_pool": 2414202.73972603,
+   "final_pool": 1189084.93150685,
+   "k_fin": null,
+   "k_bs": 1.0,
+   "milestones": [
+    {
+     "name": "Мотивационная веха 1",
+     "plan": "2025-06-30",
+     "individual_plan": null,
+     "fact": "2025-06-30",
+     "deviation_days": 0,
+     "weight": 0.166666666666667,
+     "amount": 402367.123287671,
+     "pay_date": "2025-08-08",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 2",
+     "plan": "2025-09-30",
+     "individual_plan": null,
+     "fact": "2025-09-30",
+     "deviation_days": 0,
+     "weight": 0.166666666666667,
+     "amount": 402367.123287671,
+     "pay_date": "2025-11-10",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 3",
+     "plan": "2025-12-15",
+     "individual_plan": null,
+     "fact": "2025-09-16",
+     "deviation_days": 90,
+     "weight": 0.166666666666667,
+     "amount": 603550.684931507,
+     "pay_date": "2025-11-10",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 4",
+     "plan": "2026-03-31",
+     "individual_plan": null,
+     "fact": "2026-03-31",
+     "deviation_days": 0,
+     "weight": 0.166666666666667,
+     "amount": 402367.123287671,
+     "pay_date": "2026-05-08",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 5",
+     "plan": "2026-05-29",
+     "individual_plan": null,
+     "fact": "2026-02-28",
+     "deviation_days": 90,
+     "weight": 0.166666666666667,
+     "amount": 603550.684931507,
+     "pay_date": "2026-05-08",
+     "calc_status": "рассчитано"
+    },
+    {
+     "name": "Мотивационная веха 6",
+     "plan": "2026-07-31",
+     "individual_plan": null,
+     "fact": "2026-07-31",
+     "deviation_days": 0,
+     "weight": 0.166666666666667,
+     "amount": 402367.123287671,
+     "pay_date": "2026-11-10",
+     "calc_status": "рассчитано"
+    }
+   ],
+   "final": {
+    "plan": "2026-09-30",
+    "individual_plan": null,
+    "fact": "2026-09-30",
+    "deviation_days": 0,
+    "kind": "финальный бонус",
+    "k_stage": 1.0,
+    "amount": 786717.808219178,
+    "raw_amount": 786717.8082191823,
+    "pay_date": "2026-11-10",
+    "calc_status": "рассчитано"
+   },
+   "leave": null,
+   "interest": {
+    "rows": [
+     {
+      "milestone": "Мотивационная веха 1",
+      "advance": 402367.123287671,
+      "pay_date": "2025-08-08",
+      "deferred": 198180.821917808,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "100%",
+        "days": 459,
+        "interest": 39875.0672921749
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 2",
+      "advance": 402367.123287671,
+      "pay_date": "2025-11-10",
+      "deferred": 198180.821917808,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "100%",
+        "days": 365,
+        "interest": 31708.9315068493
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 3",
+      "advance": 603550.684931507,
+      "pay_date": "2025-11-10",
+      "deferred": 297271.232876712,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "100%",
+        "days": 365,
+        "interest": 47563.397260274
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 4",
+      "advance": 402367.123287671,
+      "pay_date": "2026-05-08",
+      "deferred": 198180.821917808,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "100%",
+        "days": 186,
+        "interest": 16158.5240007506
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 5",
+      "advance": 603550.684931507,
+      "pay_date": "2026-05-08",
+      "deferred": 297271.232876712,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "100%",
+        "days": 186,
+        "interest": 24237.7860011259
+       }
+      ]
+     },
+     {
+      "milestone": "Мотивационная веха 6",
+      "advance": 402367.123287671,
+      "pay_date": "2026-11-10",
+      "deferred": 198180.821917808,
+      "rate": 0.16,
+      "parts": [
+       {
+        "part": "100%",
+        "days": 0,
+        "interest": 0.0
+       }
+      ]
+     }
+    ],
+    "total": 159543.70606117471
+   },
+   "payouts": [
+    {
+     "part": "100%",
+     "event_date": "2026-09-30",
+     "pay_date": "2026-11-10",
+     "bonus": 786717.808219178,
+     "interest": 159543.70606117471,
+     "amount": 946261.514280352,
+     "calc_status": "рассчитано",
+     "npv_checkpoint": null
+    }
+   ],
+   "total_payable": 3762831.3772940496
+  }
+ ],
+ "patches_applied": {
+  "P1_cap": 40,
+  "P2_low_npv": 2,
+  "P3_npv_ge": 4,
+  "P4_leaver": 2,
+  "P5_paydate": 24,
+  "P7_leaver_advances": 40
+ }
+}
