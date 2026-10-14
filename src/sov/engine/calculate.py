@@ -165,8 +165,26 @@ def _calculate_employee(case, employee, params, problems):
             item["calc_status"] = "нет данных"
             _problem(problems, "KPI_MISSING", tab_no, milestone=milestone["name"])
             continue
-        factor = milestone_factor(category, item["deviation_days"], financial, kpi, params)
-        item["amount"] = pb * share * weights["weight"] * bs_factor * factor
+        milestone_financial = financial
+        if kupk and "npv_by_milestone" in employee:
+            npv = employee["npv_by_milestone"].get(milestone["name"])
+            if npv is None:
+                item["calc_status"] = "нет данных"
+                _problem(problems, "NPV_MISSING", tab_no, milestone=milestone["name"])
+                continue
+            milestone_financial = k_fin(category, employee["npv_start"], npv, params)
+        milestone_bs = bs_factor
+        if bs.get("enabled") and category in ("КУПК", "РУПК") and "bs_by_milestone" in case:
+            value = case["bs_by_milestone"].get(milestone["name"])
+            if value is None:
+                item["calc_status"] = "нет данных"
+                _problem(problems, "BS_SHARE_MISSING", tab_no, milestone=milestone["name"])
+                continue
+            milestone_bs = bs_multiplier(category, True, value, params)
+        factor = milestone_factor(
+            category, item["deviation_days"], milestone_financial, kpi, params
+        )
+        item["amount"] = pb * share * weights["weight"] * milestone_bs * factor
         item["calc_status"] = (
             "ждёт предыдущую веху" if _has_previous_open(milestone, milestones) else "рассчитано"
         )

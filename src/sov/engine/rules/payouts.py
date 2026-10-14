@@ -5,6 +5,7 @@ from datetime import timedelta
 from sov.engine.params import SovParams
 from sov.engine.rules.dates import as_date, pay_date
 from sov.engine.rules.financial import is_kupk
+from sov.engine.rules.rates import rate_integral, rate_on
 
 
 def final_parts(case: dict, employee: dict, final: dict, params: SovParams) -> list[dict]:
@@ -81,6 +82,8 @@ def interest_rows(
         if milestone["amount"] is None or not milestone["pay_date"]:
             continue
         rate = case.get("key_rates", {}).get(milestone["name"], case.get("key_rate"))
+        if "key_rate_history" in case:
+            rate = rate_on(milestone["pay_date"], case["key_rate_history"])
         deferred = milestone["amount"] / advance_share * (1 - advance_share)
         row = {
             "milestone": milestone["name"],
@@ -92,15 +95,27 @@ def interest_rows(
         }
         for part in parts:
             days = (as_date(part["pay_date"]) - as_date(milestone["pay_date"])).days
-            if rate is None:
+            integral = (
+                rate_integral(milestone["pay_date"], part["pay_date"], case["key_rate_history"])
+                if "key_rate_history" in case
+                else rate * days
+                if rate is not None
+                else None
+            )
+            weighted_rate = integral / days if integral is not None and days else rate
+            if not row["parts"] and "key_rate_history" in case:
+                row["rate"] = weighted_rate
+            if integral is None:
                 value = None
                 part["calc_status"] = "нет данных"
                 part["interest"] = None
             else:
-                value = deferred * part["_share"] * rate * days / params.year_days
+                value = deferred * part["_share"] * integral / params.year_days
                 if part["interest"] is not None:
                     part["interest"] += value
-            row["parts"].append({"part": part["part"], "days": days, "interest": value})
+            row["parts"].append(
+                {"part": part["part"], "days": days, "interest": value, "rate": weighted_rate}
+            )
         rows.append(row)
     for part in parts:
         part["amount"] = (
