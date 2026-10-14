@@ -52,7 +52,12 @@ def _empty_employee(employee):
         "k_fin": None,
         "k_bs": None,
         "milestones": [],
-        "final": {"amount": None, "raw_amount": None, "calc_status": "нет данных"},
+        "final": {
+            "amount": None,
+            "raw_amount": None,
+            "calc_status": "нет данных",
+            "kind": "остаток при уходе" if employee.get("leave_date") else "финальный бонус",
+        },
         "leave": None,
         "interest": {"rows": [], "total": 0},
         "payouts": [],
@@ -156,7 +161,9 @@ def _calculate_employee(case, employee, params, problems):
             continue
         if not fact or not closed:
             continue
-        item["pay_date"] = pay_date(closed, case.get("holidays", ()), params)
+        item["pay_date"] = case.get("manual_pay_dates", {}).get(
+            milestone["name"], pay_date(closed, case.get("holidays", ()), params)
+        )
         if leave_date and closed > leave_date:
             item.update(amount=0.0, calc_status="после ухода")
             continue
@@ -261,7 +268,7 @@ def _calculate_final(case, employee, result, final_plan, params, problems):
                 }
             if _has_previous_open(final_input, case["milestones"]):
                 final["calc_status"] = "ждёт предыдущую веху"
-        if deviation > params.early_decision_days:
+        if deviation > params.early_decision_days and not case.get("early_stage_approved", False):
             final["calc_status"] = "требует решения"
             _problem(problems, "STAGE_EARLY_OVER_100", tab_no)
     parts = final_parts(case, employee, final, params)

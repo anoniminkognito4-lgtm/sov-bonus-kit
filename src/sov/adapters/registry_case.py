@@ -18,9 +18,12 @@ def quarter_add(value, offset):
 
 
 class RegistryAdapter:
-    def __init__(self, registry):
-        with registry.engine.connect() as connection:
+    def __init__(self, registry, connection=None):
+        if connection is not None:
             self.state = registry.domain_state(connection)
+        else:
+            with registry.engine.connect() as current:
+                self.state = registry.domain_state(current)
 
     def rows(self, table, **fields):
         return [r for r in self.state[table] if all(r.get(k) == v for k, v in fields.items())]
