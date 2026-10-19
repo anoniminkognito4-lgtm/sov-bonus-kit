@@ -22,3 +22,7 @@ data/real/
 .uv-cache/
 *.egg-info/
 .Rhistory
+
+# секреты
+.env
+.streamlit/secrets.toml
