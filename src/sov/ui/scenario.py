@@ -43,7 +43,12 @@ def render_scenario(service, identifier, case, selected_quarter):
     st.subheader("Что если")
     st.warning("Моделирование, не является обещанием выплаты")
     st.button("Сбросить сценарий", key="wi_reset", on_click=reset_scenario)
-    historical = st.checkbox("Исторический сценарий (включая закрытые вехи)", key="wi_historical")
+    admin = service.actor.role == "Группа СОВ"
+    historical = (
+        st.checkbox("Исторический сценарий (включая закрытые вехи)", key="wi_historical")
+        if admin
+        else False
+    )
     st.caption(
         "В обычном сценарии факты, NPV и доля БС закрытых вех сохраняются. "
         "Исторический сценарий позволяет сравнить другие условия уже завершённых событий. "
@@ -142,43 +147,44 @@ def render_scenario(service, identifier, case, selected_quarter):
                 )
                 if original is None or value != original * 100:
                     changes["bs_share"] = value / 100
-    with st.expander("Дата ухода, БГБ и загрузка · Группа СОВ"):
-        original = person.get("leave_date")
-        leave = st.checkbox("Уход с проекта", value=bool(original), key="wi_leave_on")
-        value = None
-        if leave:
-            value = st.date_input(
-                "Дата ухода",
-                value=date.fromisoformat(original or person["start"]),
-                key="wi_leave",
-                format="DD.MM.YYYY",
-            ).isoformat()
-        if value != original:
-            changes["leave_date"] = value
-        for index, period in enumerate(person["periods"]):
-            st.caption(f"Период {period['from']} — {period['to']}")
-            left, right = st.columns(2)
-            bgb = left.number_input(
-                "БГБ, ₽",
-                min_value=0.0,
-                value=float(period["bgb"]) if period["bgb"] is not None else None,
-                step=100_000.0,
-                key=f"wi_bgb_{index}",
-            )
-            load = right.number_input(
-                "Загрузка, %",
-                min_value=0.0,
-                max_value=100.0,
-                value=float(period["load"] * 100) if period["load"] is not None else None,
-                key=f"wi_load_{index}",
-            )
-            values = {}
-            if bgb is not None and bgb != period["bgb"]:
-                values["bgb"] = bgb
-            if load is not None and (period["load"] is None or load != period["load"] * 100):
-                values["load"] = load / 100
-            if values:
-                changes.setdefault("periods", {})[index] = values
+    if admin:
+        with st.expander("Дата ухода, БГБ и загрузка · Группа СОВ"):
+            original = person.get("leave_date")
+            leave = st.checkbox("Уход с проекта", value=bool(original), key="wi_leave_on")
+            value = None
+            if leave:
+                value = st.date_input(
+                    "Дата ухода",
+                    value=date.fromisoformat(original or person["start"]),
+                    key="wi_leave",
+                    format="DD.MM.YYYY",
+                ).isoformat()
+            if value != original:
+                changes["leave_date"] = value
+            for index, period in enumerate(person["periods"]):
+                st.caption(f"Период {period['from']} — {period['to']}")
+                left, right = st.columns(2)
+                bgb = left.number_input(
+                    "БГБ, ₽",
+                    min_value=0.0,
+                    value=float(period["bgb"]) if period["bgb"] is not None else None,
+                    step=100_000.0,
+                    key=f"wi_bgb_{index}",
+                )
+                load = right.number_input(
+                    "Загрузка, %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(period["load"] * 100) if period["load"] is not None else None,
+                    key=f"wi_load_{index}",
+                )
+                values = {}
+                if bgb is not None and bgb != period["bgb"]:
+                    values["bgb"] = bgb
+                if load is not None and (period["load"] is None or load != period["load"] * 100):
+                    values["load"] = load / 100
+                if values:
+                    changes.setdefault("periods", {})[index] = values
     next_quarter = quarter_add(selected_quarter, 1)
     reference = date(int(next_quarter[:4]), int(next_quarter[-1]) * 3 - 2, 1) - timedelta(days=1)
     as_of = st.date_input(
@@ -187,7 +193,7 @@ def render_scenario(service, identifier, case, selected_quarter):
     started = perf_counter()
     try:
         result = service.simulate(identifier, changes, as_of=as_of, historical=historical)
-    except ValueError as error:
+    except (ValueError, PermissionError) as error:
         st.error(str(error))
         return
     st.session_state["wi_result"] = result

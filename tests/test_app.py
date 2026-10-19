@@ -177,3 +177,34 @@ def test_whatif_bs_kpi_and_salary_controls(app):
     assert not ui.exception
     assert ui.session_state["wi_result"]["scenario"] != baseline
     registry.dispose()
+
+
+def test_employee_and_manager_cabinets_enforce_ui_scope(app):
+    ui, _ = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    ui.selectbox(key="role").set_value("Сотрудник").run()
+    assert not ui.exception
+    ui.selectbox(key="employee_account").set_value("T0002").run()
+    assert not ui.exception
+    assert all("T0002" in option for option in ui.selectbox(key="cabinet_assignment").options)
+    ui.button(key="whatif_open").click().run()
+    assert not ui.exception
+    assert not any(c.key == "wi_historical" for c in ui.checkbox)
+    assert not any(n.key.startswith("wi_bgb") for n in ui.number_input)
+    assert not any(n.key.startswith("wi_load") for n in ui.number_input)
+    ui.number_input(key="wi_npv_q2").set_value(4_900_000_000.0).run()
+    assert not ui.exception
+    assert ui.session_state["wi_result"]["scenario"] != ui.session_state["wi_result"]["baseline"]
+    ui.button(key="wi_reset").click().run()
+    assert not ui.exception
+    assert ui.session_state["wi_result"]["scenario"] == ui.session_state["wi_result"]["baseline"]
+    ui.selectbox(key="role").set_value("Руководитель").run()
+    assert not ui.exception
+    assert all("TP-T02" in option for option in ui.selectbox(key="cabinet_assignment").options)
+    assert not any(button.key == "whatif_open" for button in ui.button)
+    assert not any("БГБ" in str(frame.value) for frame in ui.dataframe)
+    assert ui.get("download_button")
+    ui.selectbox(key="role").set_value("Группа СОВ").run()
+    assert not ui.exception
+    assert ui.radio(key="page")

@@ -12,7 +12,9 @@ from sov.adapters.registry_case import quarter_add
 from sov.exports.files import payroll, problems_file, statement, summary_file
 from sov.loaders.batch import SAMPLE_ORDER
 from sov.registry.session import Registry
+from sov.services.cabinet import CabinetService
 from sov.services.panel import ADMIN, Actor, PanelService
+from sov.ui.cabinet import render_cabinet
 from sov.ui.scenario import render_scenario
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,14 +37,53 @@ def database(path):
 
 
 role = st.sidebar.selectbox("Роль", [ADMIN, "Руководитель", "Сотрудник"], key="role")
-author = st.sidebar.text_input("Пользователь", "Тестовый методолог", key="author")
-if role != ADMIN:
-    st.info("Панель расчёта доступна Группе СОВ. Кабинеты остальных ролей будут подключены позже.")
-    st.stop()
 registry = database(os.environ.get("SOV_DB_PATH", str(ROOT / "build/sov.sqlite")))
-service = PanelService(registry, Actor(author, role))
 quarters = [f"{year}-Q{number}" for year in range(2025, 2029) for number in range(1, 5)]
 selected_quarter = st.sidebar.selectbox("Квартал", quarters, index=6, key="quarter")
+
+
+def switch_identity(identity):
+    if st.session_state.get("_identity") != identity:
+        for key in list(st.session_state):
+            if key.startswith("wi_") or key in (
+                "calculation",
+                "previous_calculation",
+                "upload_preview",
+                "_audited_card",
+                "cabinet_view",
+                "cabinet_assignment",
+                "focus_tab",
+                "flash",
+            ):
+                del st.session_state[key]
+        st.session_state["_identity"] = identity
+
+
+if role != ADMIN:
+    access = json.loads((ROOT / "config/demo_access.json").read_text(encoding="utf-8"))
+    if role == "Сотрудник":
+        account = st.sidebar.selectbox(
+            "Условная учётная запись", access["employees"], key="employee_account"
+        )
+        actor = Actor(f"Сотрудник {account}", role, account)
+    else:
+        account = st.sidebar.selectbox(
+            "Условная учётная запись", list(access["managers"]), key="manager_account"
+        )
+        grant = access["managers"][account]
+        actor = Actor(
+            account,
+            role,
+            grant["tab_no"],
+            tuple(map(tuple, grant["projects"])),
+            tuple(grant["staff"]),
+        )
+    switch_identity(actor)
+    render_cabinet(CabinetService(registry, actor), selected_quarter, as_of="2026-09-30")
+    st.stop()
+author = st.sidebar.text_input("Пользователь", "Тестовый методолог", key="author")
+switch_identity((role, author))
+service = PanelService(registry, Actor(author, role))
 page = st.sidebar.radio(
     "Раздел",
     [

@@ -27,6 +27,9 @@ ADMIN = "Группа СОВ"
 class Actor:
     name: str
     role: str = ADMIN
+    tab_no: str | None = None
+    projects: tuple = ()
+    staff: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -136,19 +139,23 @@ class PanelService:
         require_admin(self.actor)
         return self.registry.rows("manual_decision")
 
-    def simulate(self, assignment_id, changes, *, as_of, historical=False):
+    def simulate(self, assignment_id, changes, *, as_of, historical=False, connection=None):
         """Чтение согласованного входа без аудита и сохранения сценария."""
         from sov.services.scenario import simulate
 
         require_admin(self.actor)
-        with self.registry.engine.connect() as connection:
-            connection.exec_driver_sql("BEGIN")
-            adapter = RegistryAdapter(self.registry, connection)
-            case, decisions = self._case_with_decisions(adapter, assignment_id)
-            result = simulate(case, changes, as_of=as_of, historical=historical)
-            for key in ("baseline", "scenario"):
-                _decision_problems(result[key], decisions)
-            return result
+        if connection is None:
+            with self.registry.engine.connect() as current:
+                current.exec_driver_sql("BEGIN")
+                return self.simulate(
+                    assignment_id, changes, as_of=as_of, historical=historical, connection=current
+                )
+        adapter = RegistryAdapter(self.registry, connection)
+        case, decisions = self._case_with_decisions(adapter, assignment_id)
+        result = simulate(case, changes, as_of=as_of, historical=historical)
+        for key in ("baseline", "scenario"):
+            _decision_problems(result[key], decisions)
+        return result
 
     def save_decision(self, kind, assignment_id, payload, basis, file_ref):
         require_admin(self.actor)
