@@ -173,7 +173,8 @@ def test_redistribution_balances_money_and_uses_average_for_final():
 
 
 @pytest.mark.parametrize(
-    "mutation", ["limit", "self", "single", "fp", "category", "fund", "final", "zero", "frozen"]
+    "mutation",
+    ["limit", "self", "single", "fp", "category", "fund", "final", "zero", "frozen", "leaver"],
 )
 def test_invalid_redistribution_never_becomes_payroll(mutation):
     context = redistribution_context()
@@ -195,6 +196,9 @@ def test_invalid_redistribution_never_becomes_payroll(mutation):
         context["members"][0]["result"]["milestones"][0]["amount"] = 0
     if mutation == "frozen":
         context["members"][0]["result"]["milestones"][0]["frozen"] = True
+    if mutation == "leaver":
+        # СОВ v3, сл. 32: решение не позднее чем за 5 рабочих дней до увольнения.
+        context["members"][0]["employee"]["leave_date"] = "2025-07-04"
     with pytest.raises(ValueError):
         validate_redistribution(context)
     case = source("T01")
@@ -268,3 +272,9 @@ def test_edition_accepts_fractional_float_parameters_but_requires_integer_days()
     rows[1].update(name="checkpoint_days", value="90.5")
     with pytest.raises(ValueError):
         params_for_quarter(rows, "2027-Q1")
+
+
+def test_redistribution_allowed_five_workdays_before_leave():
+    context = redistribution_context()
+    context["members"][0]["employee"]["hr_dismissal_date"] = "2025-07-08"  # 01.07 — за 5 раб. дней
+    assert validate_redistribution(context)["T01"]

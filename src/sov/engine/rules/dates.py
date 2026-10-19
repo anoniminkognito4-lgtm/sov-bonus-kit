@@ -1,5 +1,6 @@
 """Чистые календарные правила, без обращения к дате компьютера."""
 
+import re
 from datetime import date, timedelta
 
 from sov.engine.params import DEFAULT_PARAMS, SovParams
@@ -20,6 +21,12 @@ def pay_date(fact: str, holidays=(), params: SovParams = DEFAULT_PARAMS) -> str:
     return result.isoformat()
 
 
+def milestone_part(name: str) -> int | None:
+    """Номер части вехи из двух частей по хвосту «(часть 1)» / «(часть 2)» (сл. 55, п. 19)."""
+    match = re.search(r"\(\s*часть\s*([12])\s*\)\s*$", name or "", re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
 def milestone_weights(
     start: str,
     continues_from_prev_stage: bool,
@@ -27,14 +34,25 @@ def milestone_weights(
     plans: list[str],
     individual: dict,
     params: SovParams = DEFAULT_PARAMS,
+    parts: list | None = None,
 ) -> dict:
+    """Вес вехи = 1 ÷ число участвующих вех; часть вехи — половина веса одной вехи."""
     continued = continues_from_prev_stage and start == new_stage_start
     cutoff = as_date(start) + timedelta(days=params.newcomer_days)
     participates = [
         continued or as_date(individual.get(str(i), plan)) >= cutoff for i, plan in enumerate(plans)
     ]
-    count = sum(participates)
-    return {"participates": participates, "weight": 1 / count if count else None}
+    sizes = [0.5 if part else 1 for part in (parts or [None] * len(plans))]
+    units = sum(size for size, taking in zip(sizes, participates, strict=True) if taking)
+    weights = [
+        size / units if taking and units else None
+        for size, taking in zip(sizes, participates, strict=True)
+    ]
+    return {
+        "participates": participates,
+        "weight": 1 / units if units else None,
+        "weights": weights,
+    }
 
 
 def closure_date(milestone: dict) -> str | None:

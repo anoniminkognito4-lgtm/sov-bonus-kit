@@ -1,9 +1,52 @@
-"""Неизменяемая таблица параметров редакции СОВ v2, 3 квартал 2026."""
+"""Параметры редакции СОВ v2 (3 кв. 2026); загрузка по должностям — с историей по датам."""
 
 import json
 import math
 import re
 from dataclasses import dataclass, fields, replace
+
+_RPPP = ("Руководитель проекта по продукту",)
+_MRP = ("Менеджер по разработке продукта",)
+_RPP = ("Руководитель проекта проектирования",)
+_GIP = ("Главный инженер проекта",)
+_GIP_IS = ("Главный инженер проекта ИС",)
+_GIP_HELPER = ("Помощник ГИПа", "Помощник главного инженера проекта")
+_MANAGERS = tuple(
+    f"{level}{role}"
+    for role in (
+        "менеджер по направлениям",
+        "менеджер по благоустройству",
+        "менеджер по строительству",
+    )
+    for level in ("Старший ", "", "Младший ")
+)
+_DUP = (
+    (_RPP, (0.15, 0.5, 0.5, 0.5, 0.05), 0.05, 0.25),
+    (_GIP, (0.25, 1, 1, 0.75, 0.5), 0.25, 0.5),
+    (_GIP_IS, (0.05, 0.75, 0.75, 0.75, 0.5), 0.25, 0.25),
+    (_GIP_HELPER, (0, 1, 1, 0.75, 0.5), 0.25, 0.5),
+)
+_DUS = (
+    (("Руководитель проекта строительства",), (0, 0.25, 0.5, 0.5, 0.5), 0.25, None),
+    (("Руководитель строительства",), (0, 0, 1, 1, 1), 0.5, None),
+    (("Главный инженер по направлениям",), (0, 0, 0.5, 0.5, 0.5), 0.25, None),
+    (_MANAGERS, (0, 0, 1, 1, 1), 0.5, None),
+)
+POSITION_LOADS = (
+    # До редакции v2: ДРП по сообщению пользователя (ждёт подтверждения, D-051);
+    # ДУП и ДУС в v2 не менялись.
+    ("0001-01-01", "ДРП", _RPPP, (0.5, 0.5, 0.5, 0.1665, 0.1665), None, None),
+    ("0001-01-01", "ДРП", _MRP, (1, 1, 1, 0.333, 0.333), None, None),
+    *(("0001-01-01", "ДУП", *row) for row in _DUP),
+    *(("0001-01-01", "ДУС", *row) for row in _DUS),
+    # СОВ v2, сл. 18: снижена загрузка ДРП.
+    ("2026-07-01", "ДРП", _RPPP, (0.43, 0.43, 0.43, 0.14, 0.14), 0.07, None),
+    ("2026-07-01", "ДРП", _MRP, (1, 1, 0.8, 0.25, 0.25), 0.125, None),
+    # СОВ v3 (4 кв. 2026), сл. 18: ДУП на 5 этапе — 20% у ГИП, ГИП ИС, помощника ГИПа.
+    ("2026-10-01", "ДУП", _GIP, (0.25, 1, 1, 0.75, 0.2), 0.25, 0.5),
+    ("2026-10-01", "ДУП", _GIP_IS, (0.05, 0.75, 0.75, 0.75, 0.2), 0.25, 0.25),
+    ("2026-10-01", "ДУП", _GIP_HELPER, (0, 1, 1, 0.75, 0.2), 0.25, 0.5),
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +103,18 @@ class SovParams:
     load_over_threshold_slope: float = 2
     redistribution_limit: float = 0.3
     sale_extension_days: int = 14
+    zrp_threshold: float = 1.0  # D-047, закрывает И-1
+    # Статусы вех из 1С, которые движок понимает; прочие — проблема, веха не учитывается.
+    milestone_statuses: tuple[str, ...] = ("Назначена", "Выполнена")
+    # Блок таблицы загрузки по подразделению: (блок, слова в названии подразделения).
+    department_blocks: tuple = (
+        ("ДРП", ("ДРП", "департамент разработки продукта")),
+        ("ДУП", ("ДУП", "департамент управления проектированием")),
+        ("ДУС", ("ДУС", "ОУС", "управления строительством")),
+    )
+    # Таблицы загрузки по должностям (сл. 18) с датой начала действия:
+    # (с даты, блок, названия должности, этапы 1–5, дострой, ЛЦ и объекты СКБ).
+    position_loads: tuple = POSITION_LOADS
 
 
 DEFAULT_PARAMS = SovParams()
@@ -84,6 +139,47 @@ def _compatible(value, example):
         and math.isfinite(value)
         and value >= 0
     )
+
+
+def _number(value, allow_none=False):
+    if value is None:
+        return allow_none
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and 0 <= value <= 2
+
+
+def _texts(value):
+    return (
+        isinstance(value, tuple)
+        and bool(value)
+        and all(isinstance(v, str) and v.strip() for v in value)
+    )
+
+
+def _free_shape(name, value):
+    """Параметры-таблицы произвольной длины: проверка формы вместо сравнения с образцом."""
+    if name == "milestone_statuses":
+        return _texts(value)
+    if name == "department_blocks":
+        return isinstance(value, tuple) and all(
+            isinstance(v, tuple) and len(v) == 2 and isinstance(v[0], str) and _texts(v[1])
+            for v in value
+        )
+    if name == "position_loads":
+        return isinstance(value, tuple) and all(
+            isinstance(v, tuple)
+            and len(v) == 6
+            and isinstance(v[0], str)
+            and bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", v[0]))
+            and isinstance(v[1], str)
+            and _texts(v[2])
+            and isinstance(v[3], tuple)
+            and len(v[3]) == 5
+            and all(_number(x) for x in v[3])
+            and _number(v[4], True)
+            and _number(v[5], True)
+            for v in value
+        )
+    return None
 
 
 def params_for_quarter(rows, period):
@@ -118,7 +214,8 @@ def params_for_quarter(rows, period):
             continue
         parsed = _tuples(json.loads(value))
         default = getattr(DEFAULT_PARAMS, name)
-        if not _compatible(parsed, default):
+        free = _free_shape(name, parsed)
+        if free is False or (free is None and not _compatible(parsed, default)):
             raise ValueError(f"Неверное значение или структура параметра {name}")
         if field_types[name] is int and (not isinstance(parsed, int) or isinstance(parsed, bool)):
             raise ValueError(f"Параметр {name} должен быть целым")

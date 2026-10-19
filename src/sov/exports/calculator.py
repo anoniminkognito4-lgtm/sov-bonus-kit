@@ -75,6 +75,7 @@ def _employee_block(sheet, row, value):
         ("Дата ухода", _value(employee.get("leave_date"))),
         ("Переход из предыдущего этапа", "да" if case.get("continues_from_prev_stage") else "нет"),
         ("Длительность этапа, дней", employee.get("duration_days")),
+        ("Источник загрузки", source.get("load_source")),
         ("Проектный бонус (ПБ) этапа, ₽", _rub(employee.get("pb"))),
         ("Сумма на авансы по вехам, ₽", _rub(employee.get("advance_pool"))),
         ("Остаток на финал этапа, ₽", _rub(employee.get("final_pool"))),

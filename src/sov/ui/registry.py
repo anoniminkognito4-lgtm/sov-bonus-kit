@@ -26,6 +26,7 @@ OVERVIEW_COLUMNS = {
     "closed": "Вех закрыто",
     "total": "Вех всего",
     "late_closed": "Закрыто с просрочкой",
+    "unknown_status": "Вех с неизвестным статусом",
     "date_from": "Начало на этапе",
     "leave_date": "Уход",
     "end_reason": "Причина ухода",
@@ -45,6 +46,7 @@ STATE_ICONS = {
     "просрочена": "🔴 просрочена",
     "в работе": "⏳ в работе",
     "не участвует": "▫️ не участвует",
+    "статус 1С неизвестен": "❓ статус 1С неизвестен",
 }
 
 
@@ -253,6 +255,11 @@ def render_calculator(service, view, quarter, as_of, closed=None):
                 k2.metric("Длительность, дн", employee["duration_days"])
                 k3.metric("К фин", employee["k_fin"] if employee["k_fin"] is not None else "—")
                 k4.metric("Множитель БС", employee["k_bs"] if employee["k_bs"] is not None else "—")
+                person = value["case"]["employees"][0]
+                loads = ", ".join(
+                    f"{p['from']}…{p['to']}: {p['load']:.0%}" for p in person.get("periods", [])
+                )
+                st.caption(f"Загрузка: {loads or '—'} · источник: {person.get('load_source', '—')}")
                 st.dataframe(
                     [
                         {

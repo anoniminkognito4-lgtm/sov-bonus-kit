@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
+from sov.adapters.load import LoadPlanner
 from sov.engine.calculate import calculate_case
 from sov.engine.params import DEFAULT_PARAMS
 from sov.engine.rules.kpi import milestone_kpis, quarter, quarter_add  # noqa: F401
@@ -22,6 +23,7 @@ class RegistryAdapter:
             with registry.engine.connect() as current:
                 self.state = registry.domain_state(current)
                 self.closed = [json.loads(v) for v in current.scalars(select(snapshot.c.data_json))]
+        self.loads = LoadPlanner(self)
 
     def rows(self, table, **fields):
         return [r for r in self.state[table] if all(r.get(k) == v for k, v in fields.items())]
@@ -45,11 +47,10 @@ class RegistryAdapter:
         rows = self.rows("bs_share", project_code=code, quarter=period)
         return rows[0]["share_transferred"] if rows else None
 
-    def periods(self, assignment, employee, end, extend=False):
-        loads = sorted(
-            self.rows("assignment_load", assignment_id=assignment["id"]),
-            key=lambda r: r["date_from"],
-        )
+    def periods(self, assignment, employee, end, extend=False, loads=None):
+        if loads is None:
+            loads = self.rows("assignment_load", assignment_id=assignment["id"])
+        loads = sorted(loads, key=lambda r: r["date_from"])
         bgbs = sorted(
             self.rows("bgb_period", tab_no=employee["tab_no"]), key=lambda r: r["date_from"]
         )
@@ -85,12 +86,17 @@ class RegistryAdapter:
         employee = self.one("employee", tab_no=assignment["tab_no"])
         source_ms = self.rows("milestone", project_code=code, queue=queue, stage=stage_number)
         milestones, final, individual = [], None, {}
+        excluded_ms = []
         extend = False
         excluded = any(
             v in (assignment["position"] or "").lower()
             for v in ("вице-президент", "директор", "начальник отдела")
         )
         for source in source_ms:
+            if source["status"] and source["status"] not in self.params.milestone_statuses:
+                # Неизвестный статус 1С (например, отмена): веха не учитывается до решения.
+                excluded_ms.append({"name": source["name"], "status": source["status"]})
+                continue
             plans = self.rows("milestone_plan_version", milestone_code=source["milestone_code"])
             chosen = min if excluded else max
             plan = chosen(plans, key=lambda r: r["version"])["plan_date"] if plans else None
@@ -149,6 +155,7 @@ class RegistryAdapter:
             ).isoformat()
             for index in (1, 2)
         ]
+        load_rows, load_source, load_issues = self.loads.for_assignment(assignment, employee)
         person = {
             "tab_no": employee["tab_no"],
             "fio": employee["fio"],
@@ -156,7 +163,9 @@ class RegistryAdapter:
             "category": assignment["category"],
             "role": assignment["role"],
             "start": assignment["date_from"],
-            "periods": self.periods(assignment, employee, end, extend),
+            "periods": self.periods(assignment, employee, end, extend, load_rows),
+            "load_source": load_source,
+            "load_issues": [{"code": c, "blocking": b} for c, b in load_issues],
             "leave_date": leave,
             "hr_dismissal_date": employee["dismissal_date"],
             "npv_start": starts[0]["npv_start"] if starts else None,
@@ -269,6 +278,7 @@ class RegistryAdapter:
                 for m in milestones
             },
             "milestones": milestones,
+            "excluded_milestones": excluded_ms,
             "final": final,
             "employees": [person],
             "key_rate_history": [

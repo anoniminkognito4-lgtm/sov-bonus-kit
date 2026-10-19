@@ -6,6 +6,7 @@
 from datetime import date, timedelta
 
 from sov.engine.params import DEFAULT_PARAMS, SovParams
+from sov.engine.rules.dates import milestone_part
 
 
 def _latest_plans(rows):
@@ -62,10 +63,23 @@ class RegistryView:
             date.fromisoformat(assignment["date_from"]) + timedelta(days=self.params.newcomer_days)
         ).isoformat()
         result = []
-        for m in self.milestones.get(key, []):
+        stage_milestones = self.milestones.get(key, [])
+        key_plan = next(
+            (
+                self.individual.get((assignment["tab_no"], m["milestone_code"]))
+                or self.plans.get(m["milestone_code"])
+                for m in stage_milestones
+                if m["is_key"]
+            ),
+            None,
+        )
+        for m in stage_milestones:
             plan = self.plans.get(m["milestone_code"])
             individual = self.individual.get((assignment["tab_no"], m["milestone_code"]))
             plan_eff = individual or plan
+            if milestone_part(m["name"]) == 2 and assignment["stage"] == 4 and key_plan:
+                plan_eff = key_plan  # сл. 55 п. 19: вторая часть — к сроку РнВ
+            unknown = bool(m["status"]) and m["status"] not in self.params.milestone_statuses
             fact = m["closed_1c_date"] or m["fact_date"]
             if fact and fact > as_of:
                 fact = None  # на дату среза веха ещё не закрыта
@@ -77,7 +91,9 @@ class RegistryView:
                 deviation = -_days(as_of, plan_eff)
             else:
                 deviation = None
-            if not participates:
+            if unknown:
+                state = "статус 1С неизвестен"
+            elif not participates:
                 state = "не участвует"
             elif fact:
                 state = (
@@ -110,7 +126,9 @@ class RegistryView:
             person = self.employees.get(a["tab_no"], {})
             project = self.projects.get((a["project_code"], a["queue"]), {})
             milestones = self.milestones_for(a, as_of)
-            participating = [m for m in milestones if m["state"] != "не участвует"]
+            participating = [
+                m for m in milestones if m["state"] not in ("не участвует", "статус 1С неизвестен")
+            ]
             overdue = [m for m in participating if m["state"] == "просрочена"]
             upcoming = [m for m in participating if m["state"] == "в работе"]
             key = next((m for m in milestones if m["is_key"]), None)
@@ -145,6 +163,9 @@ class RegistryView:
                     "total": len(participating),
                     "overdue_count": len(overdue),
                     "max_overdue_days": max((-m["deviation_days"] for m in overdue), default=0),
+                    "unknown_status": sum(
+                        1 for m in milestones if m["state"] == "статус 1С неизвестен"
+                    ),
                     "late_closed": sum(
                         1 for m in participating if m["state"] == "закрыта с просрочкой"
                     ),
