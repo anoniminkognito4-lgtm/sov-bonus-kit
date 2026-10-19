@@ -10,6 +10,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 FORMATS = {
+    "sov_param": "edition name value",
     "employee": (
         "tab_no fio position department hire_date dismissal_date probation_end probation_result "
     ),
@@ -135,9 +136,24 @@ def normalize_row(raw):
         raise ValueError("Неверный формат квартала")
     if row.get("date_from") and row.get("date_to") and row["date_to"] < row["date_from"]:
         raise ValueError("Конец периода раньше начала")
+    if row.get("probation_result"):
+        values = {
+            "пройден": "пройден",
+            "не пройден": "не пройден",
+            "проходит": "проходит",
+            "passed": "пройден",
+            "failed": "не пройден",
+            "pending": "проходит",
+        }
+        value = values.get(row["probation_result"].lower())
+        if value is None or not row.get("probation_end"):
+            raise ValueError("Нужны дата окончания и результат ИС: пройден / не пройден / проходит")
+        row["probation_result"] = value
     for field in ("share_transferred",):
         if row.get(field) is not None and not 0 <= row[field] <= 1:
             raise ValueError(f"{field} должен быть от 0 до 1")
+    if row.get("pct") is not None and abs(row["pct"]) > 0.3:
+        raise ValueError("Перераспределение не может превышать ±30%")
     for field in (
         "bgb",
         "load",

@@ -16,6 +16,7 @@ MANAGER = "Руководитель"
 
 def public_case(case):
     value = deepcopy(case)
+    value.pop("redistribution_context", None)
     # Исходные периоды БГБ не передаются клиентам кабинетных сервисов.
     for person in value["employees"]:
         person.pop("periods", None)
@@ -53,9 +54,8 @@ class CabinetService:
                 current.exec_driver_sql("BEGIN")
                 return self.card(identifier, selected_quarter, as_of=as_of, connection=current)
         source = self._assignment(identifier, connection)
-        value = self._panel.calculate(
-            selected_quarter, [identifier], connection=connection
-        ).results[identifier]
+        calculation = self._panel.calculate(selected_quarter, [identifier], connection=connection)
+        value = calculation.results[identifier]
         case = value["case"]
         person = case["employees"][0]
         dates = {
@@ -86,7 +86,7 @@ class CabinetService:
             },
             "case": public_case(case),
             "result": value["result"],
-            "forecast": calculate_case(projected),
+            "forecast": calculate_case(projected, calculation.params),
             "accruals": accruals,
             "totals": {
                 "paid": sum(r["amount"] for r in paid) if paid else None,
@@ -99,18 +99,26 @@ class CabinetService:
             "as_of": as_of,
         }
 
-    def simulate(self, identifier, changes, *, as_of, historical=False):
+    def simulate(self, identifier, changes, *, as_of, historical=False, selected_quarter=None):
         with self.registry.engine.connect() as connection:
             connection.exec_driver_sql("BEGIN")
-            return self._simulate(identifier, changes, as_of, historical, connection)
+            return self._simulate(
+                identifier, changes, as_of, historical, connection, selected_quarter
+            )
 
-    def _simulate(self, identifier, changes, as_of, historical, connection):
+    def _simulate(self, identifier, changes, as_of, historical, connection, selected_quarter):
         self._assignment(identifier, connection)
         if self.actor.role != EMPLOYEE:
             raise PermissionError("Моделирование доступно сотруднику по своим назначениям")
         if historical or set(changes) & {"leave_date", "periods"}:
             raise PermissionError("Исторические даты, БГБ, загрузка и уход доступны Группе СОВ")
-        result = self._panel.simulate(identifier, changes, as_of=as_of, connection=connection)
+        result = self._panel.simulate(
+            identifier,
+            changes,
+            as_of=as_of,
+            connection=connection,
+            selected_quarter=selected_quarter,
+        )
         result["case"] = public_case(result["case"])
         return result
 

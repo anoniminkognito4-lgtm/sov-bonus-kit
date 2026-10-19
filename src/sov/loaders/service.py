@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy import delete, insert, select, update
 
+from sov.engine.params import params_for_quarter
 from sov.loaders.formats import read_source
 from sov.loaders.mapping import Unmatched, find, map_row, row_key
 from sov.registry.models import TABLES, audit_log, record_version, snapshot, upload
@@ -75,6 +76,36 @@ def _prepare(registry, path, author, connection):
             unmatched.append({"line": line, "row": raw, "message": str(error)})
         except (ValueError, TypeError, KeyError) as error:
             errors.append({"line": line, "message": str(error)})
+    if kind == "sov_param":
+        try:
+            param_rows = list(state["sov_param"].values())
+            for begin in {r["value"] for r in param_rows if r["name"] == "effective_from"}:
+                params_for_quarter(param_rows, begin)
+            params_for_quarter(param_rows, "9999-Q4")
+        except (ValueError, TypeError) as error:
+            errors.append({"line": 0, "message": str(error)})
+    if kind == "redistribution" and rows and not errors:
+        from sov.adapters.registry_case import RegistryAdapter
+        from sov.engine.rules.redistribution import validate_redistribution
+
+        try:
+            adapter = RegistryAdapter(registry, connection)
+            adapter.state = {name: list(records.values()) for name, records in state.items()}
+            scopes = set()
+            for row in state["redistribution"].values():
+                milestone = adapter.one("milestone", milestone_code=row["milestone_code"])
+                scopes.add(tuple(milestone[k] for k in ("project_code", "queue", "stage")))
+            for scope in scopes:
+                assignments = adapter.rows(
+                    "assignment",
+                    **dict(zip(("project_code", "queue", "stage"), scope, strict=True)),
+                )
+                if assignments:
+                    context = adapter.build_case(assignments[0]["id"]).get("redistribution_context")
+                    if context:
+                        validate_redistribution(context)
+        except (ValueError, TypeError) as error:
+            errors.append({"line": 0, "message": str(error)})
     originals = {name: {r["row_key"]: r for r in records} for name, records in original.items()}
     changes, unchanged = [], 0
     for (table, key), data in pending.items():

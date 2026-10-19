@@ -1,5 +1,6 @@
 """Общий перевод квартальных KPI в KPI вех для реестра и моделирования."""
 
+from calendar import monthrange
 from datetime import date
 
 
@@ -11,6 +12,11 @@ def quarter(value):
 def quarter_add(value, offset):
     index = int(value[:4]) * 4 + int(value[-1]) - 1 + offset
     return f"{index // 4}-Q{index % 4 + 1}"
+
+
+def quarter_end(value):
+    year, month = int(value[:4]), int(value[-1]) * 3
+    return date(year, month, monthrange(year, month)[1]).isoformat()
 
 
 def milestone_kpis(milestones, quarterly):

@@ -1,9 +1,11 @@
 """Выгрузки значений без формул; округление денег только здесь."""
 
 import csv
-from datetime import date
+import re
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from io import BytesIO, StringIO
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -49,6 +51,8 @@ def csv_bytes(columns, rows):
 
 def excel_bytes(sheets):
     workbook = Workbook()
+    workbook.properties.created = datetime(2000, 1, 1)
+    workbook.properties.modified = datetime(2000, 1, 1)
     workbook.remove(workbook.active)
     for name, (columns, rows) in sheets.items():
         sheet = workbook.create_sheet(name[:31])
@@ -74,7 +78,24 @@ def excel_bytes(sheets):
     result = BytesIO()
     workbook.save(result)
     workbook.close()
-    return result.getvalue()
+    # ZIP и openpyxl добавляют текущее время при каждом сохранении.
+    # Нормализуем только служебные метки, сохраняя все значения листов.
+    stable = BytesIO()
+    with ZipFile(result) as original, ZipFile(stable, "w", ZIP_DEFLATED) as output:
+        for name in sorted(original.namelist()):
+            data = original.read(name)
+            if name == "docProps/core.xml":
+                data = re.sub(
+                    rb"(<dcterms:(?:created|modified)\b[^>]*>)[^<]*(</dcterms:(?:created|modified)>)",
+                    rb"\g<1>2000-01-01T00:00:00Z\g<2>",
+                    data,
+                )
+            info = ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+            info.compress_type = ZIP_DEFLATED
+            info.create_system = 0
+            info.external_attr = 0x20
+            output.writestr(info, data)
+    return stable.getvalue()
 
 
 def payroll_rows(closed):

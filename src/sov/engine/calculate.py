@@ -1,4 +1,6 @@
-"""Чистый расчёт sov-result/1 по CALC_RULES §2–12, без внешнего состояния."""
+"""Чистый расчёт sov-result/1 по CALC_RULES §2–13, без внешнего состояния."""
+
+from copy import deepcopy
 
 from sov.engine.params import DEFAULT_PARAMS, SovParams
 from sov.engine.rules.budget import project_bonus
@@ -13,6 +15,16 @@ from sov.engine.rules.financial import (
     stage_factor,
 )
 from sov.engine.rules.payouts import apply_net_and_delay, final_parts, interest_rows
+from sov.engine.rules.redistribution import validate_redistribution
+from sov.engine.rules.special import (
+    freeze_advance,
+    frozen_payout,
+    handover_active,
+    redistribution_factor,
+    release_dates,
+    restrict_probation,
+    sale_details,
+)
 
 MESSAGES = {
     "NPV_MISSING": "Не задан NPV для расчёта.",
@@ -72,6 +84,19 @@ def _has_previous_open(milestone, all_milestones):
 def _calculate_employee(case, employee, params, problems):
     result = _empty_employee(employee)
     tab_no, category = employee.get("tab_no"), employee.get("category")
+    if case.get("is_exception") or employee.get("legacy_sov"):
+        _problem(problems, "MANUAL_CALC", tab_no)
+        return result
+    if employee.get("redistribution") and not case.get("redistribution_context"):
+        _problem(problems, "MANUAL_CALC", tab_no)
+        return result
+    try:
+        sale = sale_details(case, employee, params)
+    except ValueError:
+        _problem(problems, "MANUAL_CALC", tab_no)
+        return result
+    if sale:
+        case = {**case, "sale": sale}
     final_input = case.get("final") or {}
     if not final_input.get("plan"):
         _problem(problems, "FINAL_PLAN_MISSING", tab_no)
@@ -80,6 +105,8 @@ def _calculate_employee(case, employee, params, problems):
         _problem(problems, "ASSIGNMENT_INCOMPLETE", tab_no)
         return result
     start, leave_date = employee["start"], employee.get("leave_date")
+    if sale:
+        leave_date = sale["work_end"]
     individual = employee.get("individual_dates") or {}
     milestones = case["milestones"]
     final_plan = individual.get("final", final_input["plan"])
@@ -195,13 +222,52 @@ def _calculate_employee(case, employee, params, problems):
         item["calc_status"] = (
             "ждёт предыдущую веху" if _has_previous_open(milestone, milestones) else "рассчитано"
         )
+        if employee.get("redistribution"):
+            pct = employee["redistribution"].get(milestone["name"], 0)
+            if category != "РУПК" or abs(pct) > params.redistribution_limit:
+                _problem(problems, "MANUAL_CALC", tab_no)
+                item["calc_status"] = "ручной расчёт"
+            else:
+                item["base_amount"] = item["amount"]
+                item["redistribution_pct"] = pct
+                item["amount"] *= 1 + pct
+        freeze_advance(employee, item)
+    release_dates(case, employee, result["milestones"])
     _calculate_final(case, employee, result, final_plan, params, problems)
+    restrict_probation(case, employee, result)
+    if handover_active(case):
+        for item in result["milestones"]:
+            source = next(m for m in milestones if m["name"] == item["name"])
+            if (
+                closure_date(source)
+                and closure_date(source) > case["handover_date"]
+                and not item.get("frozen")
+            ):
+                item.update(amount=0.0, calc_status="сгорело")
+        result["final"].update(amount=0.0, calc_status="сгорело")
+        for part in result["payouts"]:
+            if not part.get("frozen"):
+                part.update(amount=0.0, bonus=0.0, interest=0.0, calc_status="сгорело")
+        result["interest"] = {
+            "rows": [],
+            "total": sum(p.get("interest") or 0 for p in result["payouts"] if p.get("frozen")),
+        }
+    result["total_payable"] = sum(
+        item["amount"] or 0
+        for item in [*result["milestones"], *result["payouts"]]
+        if item["calc_status"] == "рассчитано"
+    )
     return result
 
 
 def _calculate_final(case, employee, result, final_plan, params, problems):
     final_input = case["final"]
     fact, closed = final_input.get("fact"), closure_date(final_input)
+    sale = case.get("sale")
+    if sale:
+        fact = closed = sale["work_end"]
+    elif handover_active(case) and not fact:
+        fact = closed = case["handover_date"]
     category, tab_no = employee["category"], employee["tab_no"]
     leave_date = employee.get("leave_date")
     deviation = (as_date(final_plan) - as_date(fact)).days if fact else None
@@ -219,17 +285,51 @@ def _calculate_final(case, employee, result, final_plan, params, problems):
         "calc_status": "не закрыта",
     }
     result["final"] = final
+    if sale:
+        final["kind"] = "остаток при продаже"
+    if handover_active(case):
+        day = case["handover_date"]
+        final.update(
+            amount=0.0,
+            raw_amount=0.0,
+            calc_status="сгорело",
+            k_stage=0.0,
+            pay_date=pay_date(day, case.get("holidays", ()), params),
+        )
+        result["payouts"] = [
+            {
+                "part": "100%",
+                "event_date": day,
+                "pay_date": final["pay_date"],
+                "bonus": 0.0,
+                "interest": 0.0,
+                "amount": 0.0,
+                "calc_status": "сгорело",
+                "npv_checkpoint": None,
+            }
+        ]
+        if employee.get("frozen_payouts"):
+            result["payouts"] = [
+                {**deepcopy(part), "frozen": True} for part in employee["frozen_payouts"].values()
+            ]
+        return
     if fact and closed:
         final.update(
             k_stage=stage_factor(min(0, deviation) if leave_date else deviation, params),
             pay_date=pay_date(closed, case.get("holidays", ()), params),
             calc_status="рассчитано",
         )
+        if sale:
+            final.update(
+                k_stage=1.0, pay_date=pay_date(sale["date"], case.get("holidays", ()), params)
+            )
         factor = result["k_fin"] if is_kupk(category) else 1
         if is_kupk(category):
             checkpoints = employee.get("npv_checkpoints") or {}
             end_npv = checkpoints.get("final", employee["npv_current"])
-            if leave_date:
+            if sale:
+                end_npv = sale.get("npv_previous")
+            if leave_date and not sale:
                 leave_npv = employee.get("npv_at_leave", employee["npv_current"])
                 end_npv = employee.get("npv_stage_end", end_npv)
                 if leave_npv is not None and end_npv is not None:
@@ -251,12 +351,18 @@ def _calculate_final(case, employee, result, final_plan, params, problems):
             final["calc_status"] = "нет данных"
         if final["calc_status"] != "нет данных":
             base = result["pb"] * result["k_bs"]
+            if sale:
+                base = result["pb"]  # СОВ, сл. 38: формула продажи без множителя БС.
             worked = None
-            if leave_date:
-                worked = (as_date(leave_date) - as_date(employee["start"])).days + 1
+            if leave_date or sale:
+                worked = (
+                    as_date(sale["work_end"] if sale else leave_date) - as_date(employee["start"])
+                ).days + 1
                 base = base / result["duration_days"] * worked
-            advances = sum(m["amount"] or 0 for m in result["milestones"])
+            advances = sum(m.get("base_amount", m["amount"]) or 0 for m in result["milestones"])
             raw = base * factor * final["k_stage"] - advances
+            if employee.get("redistribution"):
+                raw *= redistribution_factor(employee, result["milestones"])
             final.update(raw_amount=raw, amount=max(0, raw))
             if leave_date:
                 result["leave"] = {
@@ -266,17 +372,37 @@ def _calculate_final(case, employee, result, final_plan, params, problems):
                     "k_fin": factor if is_kupk(category) else None,
                     "remainder": final["amount"],
                 }
-            if _has_previous_open(final_input, case["milestones"]):
+            if not sale and _has_previous_open(final_input, case["milestones"]):
                 final["calc_status"] = "ждёт предыдущую веху"
-        if deviation > params.early_decision_days and not case.get("early_stage_approved", False):
+        if (
+            not sale
+            and deviation > params.early_decision_days
+            and not case.get("early_stage_approved", False)
+        ):
             final["calc_status"] = "требует решения"
             _problem(problems, "STAGE_EARLY_OVER_100", tab_no)
     parts = final_parts(case, employee, final, params)
+    release_dates(case, employee, parts, parts=True)
     result["interest"] = interest_rows(
         case, result["milestones"], parts, result["advance_share"], params
     )
     if apply_net_and_delay(final, parts, params):
         _problem(problems, "MANUAL_CALC", tab_no)
+    if employee.get("frozen_payouts"):
+        for index, part in enumerate(parts):
+            fixed = frozen_payout(employee, part, index)
+            if fixed:
+                parts[index] = {**fixed, "frozen": True}
+        for row in result["interest"]["rows"]:
+            for index, part in enumerate(row["parts"]):
+                fixed = (
+                    employee.get("frozen_interest", {})
+                    .get(parts[index]["part"], {})
+                    .get(row["milestone"])
+                )
+                if fixed:
+                    row["parts"][index] = dict(fixed)
+        result["interest"]["total"] = sum(p["interest"] or 0 for p in parts)
     for part in parts:
         if part["calc_status"] == "нет данных":
             code = (
@@ -297,10 +423,29 @@ def calculate_case(case: dict, params: SovParams | None = None) -> dict:
     """Вернуть полный расчёт и проблемы, не изменяя входной кейс."""
     params = params or DEFAULT_PARAMS
     problems = []
+    if case.get("redistribution_context"):
+        case = deepcopy(case)
+        try:
+            maps = validate_redistribution(
+                case["redistribution_context"], params.redistribution_limit
+            )
+            for person in case["employees"]:
+                person["redistribution"] = maps.get(case["id"], {})
+        except ValueError as error:
+            for person in case["employees"]:
+                person.pop("redistribution", None)
+                _problem(problems, "MANUAL_CALC", person["tab_no"])
+                problems[-1]["message"] = f"Перераспределение: {error}"
     for milestone in [*case.get("milestones", []), case.get("final") or {}]:
         if bool(milestone.get("fact")) != bool(closure_date(milestone)):
             _problem(problems, "FACT_WITHOUT_1C_CLOSE", None, False, milestone.get("name"))
     employees = [_calculate_employee(case, e, params, problems) for e in case["employees"]]
+    if case.get("redistribution_context") and any(p["code"] == "MANUAL_CALC" for p in problems):
+        for employee in employees:
+            for item in [*employee["milestones"], employee["final"], *employee["payouts"]]:
+                if item.get("amount") is not None:
+                    item["calc_status"] = "ручной расчёт"
+            employee["total_payable"] = 0
     blocking = sorted(
         {(p["code"], p["tab_no"]) for p in problems if p["blocking"]},
         key=lambda item: (item[0], item[1] or ""),

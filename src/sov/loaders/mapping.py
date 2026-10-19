@@ -2,10 +2,13 @@
 
 import hashlib
 import json
+from calendar import monthrange
+from datetime import date, timedelta
 
 from sov.loaders.formats import normalize_bool, normalize_date
 
 KEYS = {
+    "sov_param": ("edition", "name"),
     "employee": ("tab_no",),
     "bgb_period": ("tab_no", "date_from"),
     "project": ("project_code", "queue"),
@@ -96,6 +99,22 @@ def map_row(kind, row, state):
     if kind == "assignment":
         identity = assignment_id(row["tab_no"], row["project_code"], row["queue"], row["stage"])
         previous = find(state, "assignment", id=identity)
+        if previous and any(previous[0][k] != row[k] for k in ("category", "role", "sov_type")):
+            old = previous[0]
+            if old["category"] != "РУПК" or not row["category"].startswith("КУПК"):
+                raise ValueError("Для смены категории требуется согласованный перевод РУПК → КУПК")
+            if (
+                old["end_reason"] != "перевод"
+                or not old["date_to"]
+                or (date.fromisoformat(old["date_to"]) + timedelta(days=1)).isoformat()
+                != row["date_from"]
+            ):
+                raise ValueError("Сначала закройте прежнее назначение как перевод накануне нового")
+            identity += (
+                "-"
+                + hashlib.sha256(f"{row['date_from']}:{row['category']}".encode()).hexdigest()[:12]
+            )
+            previous = find(state, "assignment", id=identity)
         data = {k: v for k, v in row.items() if k != "load"}
         data["position"] = data.pop("position_on_project")
         data["id"] = identity
@@ -105,7 +124,13 @@ def map_row(kind, row, state):
                 raise ValueError("Изменение категории/роли требует отдельного назначения (M6)")
             data["date_from"] = min(old["date_from"], data["date_from"])
             data["date_to"] = (
-                max(old["date_to"], data["date_to"]) if old["date_to"] and data["date_to"] else None
+                row["date_to"]
+                if row.get("end_reason")
+                else (
+                    max(old["date_to"], data["date_to"])
+                    if old["date_to"] and data["date_to"]
+                    else None
+                )
             )
         load = {
             "assignment_id": identity,
@@ -122,13 +147,31 @@ def map_row(kind, row, state):
             project_code=row["project_code"],
             stage=row["stage"],
         )
+        if len(matches) > 1:
+            matches = [r for r in matches if r["category"].startswith("КУПК")]
         if len(matches) != 1:
             raise Unmatched("Стартовый NPV: назначение не найдено или неоднозначно")
+        if "-" in matches[0]["id"][4:]:
+            begin = date.fromisoformat(matches[0]["date_from"])
+            expected = date(
+                begin.year, begin.month, monthrange(begin.year, begin.month)[1]
+            ).isoformat()
+            if row.get("fixed_date") != expected:
+                raise ValueError("NPV перевода должен быть зафиксирован на конец месяца перевода")
         row = {k: v for k, v in row.items() if k not in ("tab_no", "project_code", "stage")}
         row.update(assignment_id=matches[0]["id"], corrections=None)
     if kind in ("individual_date", "redistribution"):
         require(state, "employee", tab_no=row["tab_no"])
         milestone = milestone_for(state, row)
+        if kind == "redistribution" and any(
+            row.get(k) is None for k in ("pct", "decided_by", "approved_date", "basis")
+        ):
+            raise ValueError("Нужны процент, РФП, дата согласования и основание перераспределения")
+        if kind == "redistribution" and milestone["is_key"]:
+            raise ValueError(
+                "Проценты задаются по промежуточным вехам; "
+                "коэффициент финала считается автоматически"
+            )
         row = {k: v for k, v in row.items() if k not in ("project_code", "stage", "milestone")}
         row["milestone_code"] = milestone["milestone_code"]
     if kind == "milestone":

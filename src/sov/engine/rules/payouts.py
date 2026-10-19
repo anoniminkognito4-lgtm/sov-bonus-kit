@@ -15,6 +15,7 @@ def final_parts(case: dict, employee: dict, final: dict, params: SovParams) -> l
     expense = case.get("stage5_expense") or {}
     split_expense = (
         kupk
+        and not case.get("sale")
         and case["stage"] == 5
         and employee.get("role") in ("РП", "РПС")
         and expense.get("remaining")
@@ -22,21 +23,30 @@ def final_parts(case: dict, employee: dict, final: dict, params: SovParams) -> l
     checkpoints = employee.get("npv_checkpoints") or {}
     npv_final = checkpoints.get("final", employee.get("npv_current"))
     shares = (
-        params.stage5_shares
+        (1.0,)
+        if case.get("sale")
+        else params.stage5_shares
         if split_expense
         else params.final_shares
         if kupk and case["stage"] != 5
         else (1.0,)
     )
     labels = (
-        ("50%", "50% (2)")
+        (f"{shares[0] * 100:g}%", f"{shares[1] * 100:g}% (2)")
         if split_expense
-        else (("50%", "25% (1)", "25% (2)") if len(shares) == 3 else ("100%",))
+        else (
+            (f"{shares[0] * 100:g}%", f"{shares[1] * 100:g}% (1)", f"{shares[2] * 100:g}% (2)")
+            if len(shares) == 3
+            else ("100%",)
+        )
     )
     result = []
     for index, (label, share) in enumerate(zip(labels, shares, strict=True)):
         offset = (2 if split_expense and index else index) * params.checkpoint_days
-        event = (as_date(final["fact"]) + timedelta(days=offset)).isoformat()
+        event = (
+            as_date(case["sale"]["date"] if case.get("sale") else final["fact"])
+            + timedelta(days=offset)
+        ).isoformat()
         status = final["calc_status"]
         checkpoint = None
         if len(shares) == 3:
@@ -47,6 +57,7 @@ def final_parts(case: dict, employee: dict, final: dict, params: SovParams) -> l
                 status = "приостановлено"
         part = {
             "part": label,
+            "slot": index,
             "event_date": event,
             "pay_date": (
                 final["pay_date"]
@@ -84,7 +95,9 @@ def interest_rows(
         rate = case.get("key_rates", {}).get(milestone["name"], case.get("key_rate"))
         if "key_rate_history" in case:
             rate = rate_on(milestone["pay_date"], case["key_rate_history"])
-        deferred = milestone["amount"] / advance_share * (1 - advance_share)
+        deferred = milestone.get(
+            "frozen_deferred", milestone["amount"] / advance_share * (1 - advance_share)
+        )
         row = {
             "milestone": milestone["name"],
             "advance": milestone["amount"],

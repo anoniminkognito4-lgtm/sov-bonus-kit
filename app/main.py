@@ -9,12 +9,15 @@ from uuid import uuid4
 import streamlit as st
 
 from sov.adapters.registry_case import quarter_add
+from sov.engine.rules.dates import pay_date
+from sov.engine.rules.kpi import quarter_end
 from sov.exports.files import payroll, problems_file, statement, summary_file
 from sov.loaders.batch import SAMPLE_ORDER
 from sov.registry.session import Registry
 from sov.services.cabinet import CabinetService
 from sov.services.panel import ADMIN, Actor, PanelService
 from sov.ui.cabinet import render_cabinet
+from sov.ui.redistribution import render_redistribution
 from sov.ui.scenario import render_scenario
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +82,9 @@ if role != ADMIN:
             tuple(grant["staff"]),
         )
     switch_identity(actor)
-    render_cabinet(CabinetService(registry, actor), selected_quarter, as_of="2026-09-30")
+    render_cabinet(
+        CabinetService(registry, actor), selected_quarter, as_of=quarter_end(selected_quarter)
+    )
     st.stop()
 author = st.sidebar.text_input("Пользователь", "Тестовый методолог", key="author")
 switch_identity((role, author))
@@ -647,7 +652,9 @@ elif page == "Ручные решения":
             "Корректировка стартового NPV": "start_npv",
             "Расходная часть пятого этапа": "stage5_expense",
             "Выплата вне сессии": "outside_session",
-            "Перераспределение ±30%": "redistribution",
+            "Выплата после испытательного срока": "probation_release",
+            "Завершение работы при продаже": "sale_end",
+            "Корректировка закрытого квартала": "correction",
         }
         identifier = st.selectbox(
             "Назначение для решения",
@@ -681,22 +688,56 @@ elif page == "Ручные решения":
             payload["pay_date"] = st.date_input(
                 "Дата выплаты", value=date(2026, 11, 10)
             ).isoformat()
-        else:
-            payload["pct"] = (
-                st.number_input("Перераспределение, %", min_value=-30.0, max_value=30.0) / 100
+        elif kind == "probation_release":
+            payload["pay_date"] = st.date_input(
+                "Согласованная дата выплаты после ИС",
+                value=date.fromisoformat(quarter_end(selected_quarter)),
+            ).isoformat()
+        elif kind == "sale_end":
+            payload["work_end"] = st.date_input(
+                "Последний день работы при продаже",
+                value=date.fromisoformat(quarter_end(selected_quarter)),
+            ).isoformat()
+            payload["extension_approved"] = st.checkbox(
+                "Согласована работа после первого платежа (до 14 дней)"
             )
-            st.info(
-                "Решение сохранится для ручного расчёта. До его обработки начисление блокируется."
-            )
+        elif kind == "correction":
+            available = {q: source for q in quarters if (source := service.closed(q))}
+            payload["snapshot_id"] = None
+            if not available:
+                st.info("Сначала закройте исходный квартал.")
+            else:
+                source_quarter = st.selectbox(
+                    "Исходный закрытый квартал", list(available), key="correction_source"
+                )
+                targets = [q for q in quarters if q > source_quarter and q not in available]
+                if targets:
+                    target = st.selectbox("Квартал корректировки", targets, key="correction_target")
+                    payload.update(snapshot_id=available[source_quarter]["id"], quarter=target)
+                    payload["amount"] = st.number_input(
+                        "Сумма корректировки, ₽ (со знаком)", value=0.0, key="correction_amount"
+                    )
+                    payload["pay_date"] = st.date_input(
+                        "Дата выплаты корректировки",
+                        value=date.fromisoformat(pay_date(quarter_end(target))),
+                        key="correction_pay_date",
+                    ).isoformat()
+                else:
+                    st.info("Нет доступного следующего квартала для корректировки.")
         basis = st.text_area("Основание решения", key="decision_basis")
         file_ref = st.text_input("Ссылка / имя подтверждающего файла", key="decision_file")
-        if st.button("Сохранить решение", key="save_decision"):
+        if st.button(
+            "Сохранить решение",
+            key="save_decision",
+            disabled=kind == "correction" and not payload.get("snapshot_id"),
+        ):
             try:
                 service.save_decision(kind, identifier, payload, basis, file_ref)
                 refresh("Решение сохранено в журнале. Пересчитайте квартал.")
             except (ValueError, KeyError) as error:
                 st.error(str(error))
         table(service.decisions(), hide_index=True)
+        render_redistribution(service, selected_quarter)
 
 elif page == "Расчёт и закрытие":
     st.subheader(f"Расчёт и закрытие · {selected_quarter}")

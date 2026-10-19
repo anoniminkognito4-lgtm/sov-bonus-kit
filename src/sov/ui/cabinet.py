@@ -6,6 +6,8 @@ from sov.services.cabinet import EMPLOYEE
 from sov.ui.scenario import money, render_scenario
 
 STATUS_COMMENTS = {
+    "ожидает окончания ИС": "Выплата ждёт успешного окончания ИС и подтверждённой даты выплаты.",
+    "сгорело": "Бонус не выплачивается по условиям ИС или передачи проекта.",
     "не участвует": "Веха не участвует в расчёте по дате начала назначения.",
     "ждёт предыдущую веху": "Бонус будет выплачен после выполнения предшествующих вех.",
     "нет данных": "Для расчёта не хватает источников; сумма не подменяется нулём.",
@@ -18,7 +20,7 @@ STATUS_COMMENTS = {
 def render_cabinet(service, selected_quarter, as_of):
     own = service.actor.role == EMPLOYEE
     st.subheader("Личный кабинет" if own else "Проекты руководителя")
-    st.caption("Вход демонстрационный. Область доступа задана в config/demo_access.json.")
+    st.caption("Демонстрационная учётная запись. Показаны только доступные назначения.")
     assignments = service.assignments()
     if not assignments:
         st.info(
@@ -83,10 +85,10 @@ def render_cabinet(service, selected_quarter, as_of):
                 "Контрольный NPV": p.get("npv_checkpoint"),
                 "Статус": p["calc_status"],
                 "Условие": "NPV не ниже финального"
-                if p["part"].startswith("25%")
+                if index > 0 and len(employee["payouts"]) == 3
                 else "По правилам этапа",
             }
-            for p in employee["payouts"]
+            for index, p in enumerate(employee["payouts"])
         ],
         hide_index=True,
         width="stretch",
@@ -102,6 +104,15 @@ def render_cabinet(service, selected_quarter, as_of):
         "Прочерк в выплаченном означает отсутствие подтверждения оплаты; "
         "дата выплаты сама по себе её не подтверждает."
     )
+    if card["forecast"]["blocking_problems"]:
+        st.warning("Прогноз неполный: есть недостающие данные или условия ручного расчёта.")
+    if card["result"]["problems"]:
+        with st.expander("Условия и ограничения расчёта"):
+            st.dataframe(
+                [{"Код": p["code"], "Пояснение": p["message"]} for p in card["result"]["problems"]],
+                hide_index=True,
+                width="stretch",
+            )
     with st.expander("Начисления по закрытым снимкам"):
         st.dataframe(
             [

@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from math import isfinite
 
 from sov.engine.calculate import calculate_case
+from sov.engine.params import DEFAULT_PARAMS
 from sov.engine.rules.dates import closure_date
 from sov.engine.rules.financial import is_kupk
 from sov.engine.rules.kpi import milestone_kpis, quarter, quarter_add
@@ -53,6 +54,9 @@ def scenario_case(case, changes, *, historical=False):
         raise ValueError("Неизвестные поля сценария")
     result = deepcopy(case)
     person, original = result["employees"][0], case["employees"][0]
+    if historical and changes:
+        for key in ("frozen_advances", "frozen_payouts", "frozen_interest"):
+            person.pop(key, None)
     targets = {m["name"]: m for m in result["milestones"]}
     targets["final"] = result["final"]
     originals = {m["name"]: m for m in case["milestones"]}
@@ -152,7 +156,7 @@ def nearest_payment(employee, as_of):
     return {"date": first, "amount": sum(r["amount"] for r in rows if r["pay_date"] == first)}
 
 
-def day_prices(case, *, historical=False):
+def day_prices(case, *, historical=False, params=DEFAULT_PARAMS):
     """Цена дня опережения через тот же движок; в зоне нуля по сроку — ноль (UI §4)."""
     person = case["employees"][0]
     prices = []
@@ -169,7 +173,7 @@ def day_prices(case, *, historical=False):
 
         def amount(value):
             projected = scenario_case(case, {"dates": {name: value}}, historical=True)
-            employee = calculate_case(projected)["employees"][0]
+            employee = calculate_case(projected, params)["employees"][0]
             if name == "final":
                 return employee["final"]["amount"]
             return next((m["amount"] for m in employee["milestones"] if m["name"] == name), None)
@@ -177,7 +181,11 @@ def day_prices(case, *, historical=False):
         current = amount(day)
         earlier = amount((date.fromisoformat(day) - timedelta(days=1)).isoformat())
         value = earlier - current if current is not None and earlier is not None else None
-        if name != "final" and (date.fromisoformat(day) - date.fromisoformat(plan)).days >= 100:
+        if (
+            name != "final"
+            and (date.fromisoformat(day) - date.fromisoformat(plan)).days
+            >= params.timing_scale_days
+        ):
             value = 0.0 if current is not None else None
         prices.append({"name": milestone["name"], "date": day, "amount": value})
     return prices
@@ -223,10 +231,10 @@ def comparison_rows(baseline, scenario):
     return rows
 
 
-def simulate(case, changes, *, as_of, historical=False):
+def simulate(case, changes, *, as_of, historical=False, params=DEFAULT_PARAMS):
     """Общий движок на исходном и подменённом входе, без текущей даты и побочных эффектов."""
     projected = scenario_case(case, changes, historical=historical)
-    baseline, scenario = calculate_case(case), calculate_case(projected)
+    baseline, scenario = calculate_case(case, params), calculate_case(projected, params)
     left, right = baseline["employees"][0], scenario["employees"][0]
     eligible = {
         m["name"] for m in [*case["milestones"], case["final"]] if historical or not closure_date(m)
@@ -236,8 +244,16 @@ def simulate(case, changes, *, as_of, historical=False):
         "baseline": baseline,
         "scenario": scenario,
         "rows": comparison_rows(left, right),
-        "prices": [r for r in day_prices(projected, historical=True) if r["name"] in eligible],
+        "prices": [
+            r
+            for r in day_prices(projected, historical=True, params=params)
+            if r["name"] in eligible
+        ],
         "nearest_now": nearest_payment(left, as_of),
         "nearest_scenario": nearest_payment(right, as_of),
         "as_of": as_of,
+        "rules": {
+            "timing_scale_days": params.timing_scale_days,
+            "milestone_cap": params.milestone_cap,
+        },
     }

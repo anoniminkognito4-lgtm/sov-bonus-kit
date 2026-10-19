@@ -8,7 +8,7 @@ from sqlalchemy import insert, select
 
 from sov.adapters.registry_case import RegistryAdapter, quarter, quarter_add
 from sov.engine.calculate import calculate_case
-from sov.engine.params import DEFAULT_PARAMS
+from sov.engine.params import DEFAULT_PARAMS, params_for_quarter
 from sov.loaders.batch import load_samples
 from sov.loaders.service import (
     _audit,
@@ -40,6 +40,7 @@ class Calculation:
     entries: tuple
     problems: tuple
     results: dict
+    params: object = DEFAULT_PARAMS
 
     @property
     def blocking(self):
@@ -52,6 +53,8 @@ def require_admin(actor):
 
 
 def _decision_problems(result, decisions):
+    if any(row["kind"] == "redistribution_batch" for row, _ in decisions):
+        return
     for row, _ in decisions:
         if row["kind"] == "redistribution":
             result["problems"].append(
@@ -59,7 +62,7 @@ def _decision_problems(result, decisions):
                     "code": "MANUAL_CALC",
                     "tab_no": result["employees"][0]["tab_no"],
                     "blocking": True,
-                    "message": "Перераспределение требует расчёта; автоматизация — M6",
+                    "message": "Нужен полный состав группового перераспределения",
                 }
             )
 
@@ -139,7 +142,68 @@ class PanelService:
         require_admin(self.actor)
         return self.registry.rows("manual_decision")
 
-    def simulate(self, assignment_id, changes, *, as_of, historical=False, connection=None):
+    def save_redistribution(self, rows, leader, approved_date, basis, file_ref):
+        """Одно согласованное письмо со всеми контрагентами, атомарно."""
+        from datetime import date
+        from math import isfinite
+
+        from sov.adapters.redistribution import build_context
+        from sov.engine.rules.redistribution import validate_redistribution
+
+        require_admin(self.actor)
+        date.fromisoformat(approved_date)
+        if not rows or not basis.strip() or not file_ref.strip():
+            raise ValueError("Нужны участники, основание и файл согласования")
+        with self.registry.transaction() as connection:
+            params = params_for_quarter(
+                self.registry.rows("sov_param", connection), quarter(approved_date)
+            )
+            adapter = RegistryAdapter(self.registry, connection, params)
+            adapter.one("employee", tab_no=leader)
+            enriched = []
+            for row in rows:
+                if not isfinite(row["pct"]):
+                    raise ValueError("Процент должен быть конечным")
+                enriched.append(
+                    {
+                        **row,
+                        "decided_by": leader,
+                        "approved_date": approved_date,
+                        "basis": basis.strip(),
+                    }
+                )
+            context = build_context(adapter, rows[0]["assignment_id"], enriched)
+            validate_redistribution(context, params.redistribution_limit)
+            identifier, time = str(uuid4()), timestamp()
+            _domain_insert(
+                connection,
+                "manual_decision",
+                {
+                    "id": identifier,
+                    "kind": "redistribution_batch",
+                    "tab_no": leader,
+                    "payload_json": json_text({"rows": enriched}),
+                    "basis": basis.strip(),
+                    "file_ref": file_ref.strip(),
+                    "author": self.actor.name,
+                },
+                time,
+                self.actor,
+                basis,
+            )
+            self.registry.bump_revision(connection)
+            return identifier
+
+    def simulate(
+        self,
+        assignment_id,
+        changes,
+        *,
+        as_of,
+        historical=False,
+        connection=None,
+        selected_quarter=None,
+    ):
         """Чтение согласованного входа без аудита и сохранения сценария."""
         from sov.services.scenario import simulate
 
@@ -148,11 +212,22 @@ class PanelService:
             with self.registry.engine.connect() as current:
                 current.exec_driver_sql("BEGIN")
                 return self.simulate(
-                    assignment_id, changes, as_of=as_of, historical=historical, connection=current
+                    assignment_id,
+                    changes,
+                    as_of=as_of,
+                    historical=historical,
+                    connection=current,
+                    selected_quarter=selected_quarter,
                 )
-        adapter = RegistryAdapter(self.registry, connection)
+        params = params_for_quarter(
+            self.registry.rows("sov_param", connection), selected_quarter or quarter(as_of)
+        )
+        adapter = RegistryAdapter(self.registry, connection, params)
         case, decisions = self._case_with_decisions(adapter, assignment_id)
-        result = simulate(case, changes, as_of=as_of, historical=historical)
+        from sov.engine.rules.kpi import quarter_end
+
+        case["as_of"] = quarter_end(selected_quarter or quarter(as_of))
+        result = simulate(case, changes, as_of=as_of, historical=historical, params=params)
         for key in ("baseline", "scenario"):
             _decision_problems(result[key], decisions)
         return result
@@ -165,6 +240,9 @@ class PanelService:
             "stage5_expense",
             "outside_session",
             "redistribution",
+            "probation_release",
+            "sale_end",
+            "correction",
         ):
             raise ValueError("Неизвестный вид решения")
         if not basis.strip() or not file_ref.strip():
@@ -175,8 +253,65 @@ class PanelService:
             case = adapter.build_case(assignment_id)
             payload = dict(payload)
             payload["assignment_id"] = assignment_id
+            if kind == "correction":
+                from datetime import date
+                from math import isfinite
+
+                value = float(payload["amount"])
+                if not isfinite(value) or value == 0:
+                    raise ValueError("Корректировка должна быть конечной ненулевой суммой")
+                payload["amount"] = value
+                date.fromisoformat(payload["pay_date"])
+                target_quarter = payload["quarter"]
+                if quarter_add(target_quarter, 0) != target_quarter:
+                    raise ValueError("Неверный квартал корректировки")
+                original = (
+                    connection.execute(
+                        select(snapshot).where(snapshot.c.id == payload["snapshot_id"])
+                    )
+                    .mappings()
+                    .first()
+                )
+                if not original or target_quarter <= original["quarter"]:
+                    raise ValueError("Корректировка относится к кварталу после исходного закрытого")
+                if not any(
+                    r["assignment_id"] == assignment_id
+                    for r in json.loads(original["data_json"]).get("entries", [])
+                ):
+                    raise ValueError("В исходном снимке нет начисления по этому назначению")
+                if connection.scalar(
+                    select(snapshot.c.id).where(snapshot.c.quarter == target_quarter)
+                ):
+                    raise ValueError("Квартал корректировки уже закрыт")
+                if quarter(payload["pay_date"]) < target_quarter:
+                    raise ValueError("Дата выплаты корректировки раньше квартала начисления")
             if kind == "start_npv":
                 payload["value"] = float(payload["value"])
+            if kind in ("probation_release", "sale_end"):
+                from datetime import date
+
+                field = "pay_date" if kind == "probation_release" else "work_end"
+                date.fromisoformat(payload[field])
+                if kind == "probation_release":
+                    person = case["employees"][0]
+                    if (
+                        person.get("probation_result") != "пройден"
+                        or not person.get("probation_end")
+                        or payload[field] < person["probation_end"]
+                    ):
+                        raise ValueError(
+                            "Нужно успешное окончание ИС и дата выплаты не раньше его окончания"
+                        )
+                else:
+                    if not case.get("sale"):
+                        raise ValueError("В источнике проекта не задана дата продажи")
+                    from sov.engine.rules.special import sale_details
+
+                    sale_details(
+                        {**case, "sale": {**case["sale"], **payload}},
+                        case["employees"][0],
+                        DEFAULT_PARAMS,
+                    )
             if kind == "early_stage" and payload.get("approved") is not True:
                 raise ValueError("Нужно явное подтверждение решения по опережению")
             if kind == "outside_session":
@@ -220,6 +355,8 @@ class PanelService:
         for row in adapter.state["manual_decision"]:
             payload = json.loads(row["payload_json"])
             scope_match = payload.get("assignment_id") == identifier
+            if row["kind"] == "redistribution_batch":
+                scope_match = any(r["assignment_id"] == identifier for r in payload["rows"])
             if row["kind"] == "stage5_expense" and not scope_match:
                 source = adapter.one("assignment", id=payload["assignment_id"])
                 scope_match = all(
@@ -241,6 +378,13 @@ class PanelService:
                 case.setdefault("manual_pay_dates", {})[payload["milestone"]] = payload["pay_date"]
             if row["kind"] == "early_stage":
                 case["early_stage_approved"] = True
+            if row["kind"] == "probation_release":
+                case["employees"][0]["probation_release_date"] = payload["pay_date"]
+            if row["kind"] == "sale_end" and case.get("sale"):
+                case["sale"].update(
+                    work_end=payload["work_end"],
+                    extension_approved=payload.get("extension_approved", False),
+                )
         return case, decisions
 
     def calculate(self, selected_quarter, assignment_ids=None, connection=None, previous=None):
@@ -251,7 +395,8 @@ class PanelService:
         # Проверка формата без зависимости от текущей даты компьютера.
         if quarter_add(selected_quarter, 0) != selected_quarter:
             raise ValueError("Неверный квартал")
-        adapter = RegistryAdapter(self.registry, connection)
+        params = params_for_quarter(self.registry.rows("sov_param", connection), selected_quarter)
+        adapter = RegistryAdapter(self.registry, connection, params)
         all_ids = sorted(r["id"] for r in adapter.state["assignment"])
         identifiers = sorted(all_ids if assignment_ids is None else assignment_ids)
         if not identifiers or not set(identifiers) <= set(all_ids):
@@ -259,7 +404,10 @@ class PanelService:
         entries, problems, results = [], [], {}
         for identifier in identifiers:
             case, decisions = self._case_with_decisions(adapter, identifier)
-            result = calculate_case(case)
+            from sov.engine.rules.kpi import quarter_end
+
+            case["as_of"] = quarter_end(selected_quarter)
+            result = calculate_case(case, params)
             employee = result["employees"][0]
             _decision_problems(result, decisions)
             source = adapter.one("assignment", id=identifier)
@@ -275,6 +423,10 @@ class PanelService:
             relevant |= any(
                 quarter(p["event_date"]) == selected_quarter for p in employee["payouts"]
             )
+            relevant |= any(
+                m.get("recognition_date") and quarter(m["recognition_date"]) == selected_quarter
+                for m in employee["milestones"]
+            )
             relevant |= not case["final"].get("plan") and bool(result["problems"])
             if relevant:
                 problems.extend(
@@ -282,7 +434,7 @@ class PanelService:
                     for p in result["problems"]
                 )
             for item in employee["milestones"]:
-                event = source_ms[item["name"]].get("closed_1c")
+                event = item.get("recognition_date") or source_ms[item["name"]].get("closed_1c")
                 if event and quarter(event) == selected_quarter and item["amount"] is not None:
                     entries.append(
                         self._entry(
@@ -298,6 +450,7 @@ class PanelService:
                             selected_quarter,
                             event,
                             item["amount"],
+                            params.edition,
                         )
                     )
             for part in employee["payouts"]:
@@ -325,8 +478,36 @@ class PanelService:
                                 selected_quarter,
                                 part["event_date"],
                                 amount if part["calc_status"] != "не выплачивается" else 0,
+                                params.edition,
                             )
                         )
+            for decision, payload in decisions:
+                if decision["kind"] == "correction" and payload["quarter"] == selected_quarter:
+                    item = {
+                        "pay_date": payload["pay_date"],
+                        "calc_status": "рассчитано",
+                        "manual_approved": True,
+                    }
+                    entry = self._entry(
+                        adapter,
+                        source,
+                        hr,
+                        project,
+                        identifier,
+                        item,
+                        "корректировка закрытого квартала",
+                        "",
+                        "",
+                        selected_quarter,
+                        quarter_end(selected_quarter),
+                        payload["amount"],
+                        params.edition,
+                    )
+                    entry.update(
+                        correction_snapshot_id=payload["snapshot_id"],
+                        correction_decision_id=decision["id"],
+                    )
+                    entries.append(entry)
             results[identifier] = {"case": case, "result": result}
         for entry in entries:
             if entry["calc_status"] == "прогноз":
@@ -350,7 +531,7 @@ class PanelService:
                         totals[key] = totals.get(key, 0) + row["amount"]
             for identifier, amount in new_totals.items():
                 old = old_totals.get(identifier, 0)
-                if old and abs(amount / old - 1) > DEFAULT_PARAMS.amount_change_threshold:
+                if old and abs(amount / old - 1) > params.amount_change_threshold:
                     source = adapter.one("assignment", id=identifier)
                     problem = {
                         "code": "AMOUNT_CHANGE_10PCT",
@@ -370,6 +551,7 @@ class PanelService:
             tuple(entries),
             tuple(unique.values()),
             results,
+            params,
         )
 
     def _entry(
@@ -386,10 +568,19 @@ class PanelService:
         selected_quarter,
         event,
         amount,
+        edition,
     ):
         status = item["calc_status"]
-        if source["category"].startswith("КУПК") and status == "рассчитано":
-            fm = adapter.rows("npv", project_code=source["project_code"], quarter=quarter(event))
+        if (
+            source["category"].startswith("КУПК")
+            and status == "рассчитано"
+            and not item.get("manual_approved")
+        ):
+            fm = adapter.rows(
+                "npv",
+                project_code=source["project_code"],
+                quarter=quarter(item.get("financial_event") or event),
+            )
             if not fm or not fm[0]["fub_approved_date"]:
                 status = "прогноз"
         ms = adapter.rows(
@@ -416,7 +607,7 @@ class PanelService:
             "pay_date": item["pay_date"],
             "amount": amount,
             "calc_status": status,
-            "edition": DEFAULT_PARAMS.edition,
+            "edition": edition,
         }
 
     def close(self, calculation):
@@ -459,7 +650,7 @@ class PanelService:
                 rows.append({**entry, "id": data["id"], "snapshot_id": identifier})
             payload = {
                 "data": adapter.state,
-                "params": asdict(DEFAULT_PARAMS),
+                "params": asdict(current.params),
                 "entries": rows,
                 "results": current.results,
                 "problems": current.problems,
@@ -470,7 +661,7 @@ class PanelService:
                     quarter=current.quarter,
                     closed_at=time,
                     closed_by=self.actor.name,
-                    edition=DEFAULT_PARAMS.edition,
+                    edition=current.params.edition,
                     data_json=json_text(payload),
                 )
             )

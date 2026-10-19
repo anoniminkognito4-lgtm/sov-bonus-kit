@@ -113,7 +113,9 @@ def render_scenario(service, identifier, case, selected_quarter):
                         changes["npv_current"] = value
                     else:
                         changes.setdefault("npv_checkpoints", {})[key] = value
-            st.caption("Стартовый NPV фиксирован. Контрольные NPV меняют условия частей 25%.")
+            st.caption(
+                "Стартовый NPV фиксирован. Контрольные NPV меняют условия отложенных частей."
+            )
         if person["category"] == "МП":
             for period in quarterly_periods(case):
                 original = person.get("kpi_quarterly", {}).get(period)
@@ -192,11 +194,18 @@ def render_scenario(service, identifier, case, selected_quarter):
     ).isoformat()
     started = perf_counter()
     try:
-        result = service.simulate(identifier, changes, as_of=as_of, historical=historical)
+        result = service.simulate(
+            identifier,
+            changes,
+            as_of=as_of,
+            historical=historical,
+            selected_quarter=selected_quarter,
+        )
     except (ValueError, PermissionError) as error:
         st.error(str(error))
         return
     st.session_state["wi_result"] = result
+    st.caption(f"Редакция правил: {result['baseline']['edition']}")
     st.caption(f"Пересчёт: {perf_counter() - started:.3f} с · сценарий в реестр не записывается")
     now, projected = result["baseline"]["employees"][0], result["scenario"]["employees"][0]
     for column, label, employee, nearest in zip(
@@ -243,7 +252,8 @@ def render_scenario(service, identifier, case, selected_quarter):
         st.caption(
             "Прибавка за один день раньше выбранного факта; "
             "без заданного факта — относительно срока. "
-            "У промежуточной вехи на потолке и в зоне просрочки ≥100 дней — 0. "
+            f"У промежуточной вехи на потолке {result['rules']['milestone_cap'] * 100:g}% "
+            f"и в зоне просрочки ≥{result['rules']['timing_scale_days']} дней — 0. "
             "Для ключевой вехи действует К срока этапа."
         )
         st.dataframe(
