@@ -16,8 +16,10 @@ from sov.loaders.batch import SAMPLE_ORDER
 from sov.registry.session import Registry
 from sov.services.cabinet import CabinetService
 from sov.services.panel import ADMIN, Actor, PanelService
+from sov.services.registry_view import RegistryView
 from sov.ui.cabinet import render_cabinet
 from sov.ui.redistribution import render_redistribution
+from sov.ui.registry import render_calculator, render_registry
 from sov.ui.scenario import render_scenario
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +94,8 @@ service = PanelService(registry, Actor(author, role))
 page = st.sidebar.radio(
     "Раздел",
     [
+        "Реестр",
+        "Калькулятор",
         "Обзор",
         "Сотрудники",
         "Проекты",
@@ -341,8 +345,21 @@ assignments = registry.rows("assignment")
 projects = registry.rows("project")
 calculation = current_calculation()
 closed = service.closed(selected_quarter)
+as_of = quarter_end(selected_quarter)
 
-if page == "Обзор":
+if page == "Реестр":
+    as_of = st.sidebar.date_input(
+        "Срез реестра на дату",
+        date.fromisoformat(as_of),
+        format="DD.MM.YYYY",
+        key=f"reg_as_of_{selected_quarter}",
+    ).isoformat()
+    render_registry(RegistryView(registry.rows), as_of, goto_employee)
+
+elif page == "Калькулятор":
+    render_calculator(service, RegistryView(registry.rows), selected_quarter, as_of, closed)
+
+elif page == "Обзор":
     st.subheader(f"Квартал {selected_quarter}")
     a, b, c, d = st.columns(4)
     a.metric("Сотрудники", len(employees))
@@ -765,6 +782,7 @@ elif page == "Расчёт и закрытие":
         ids = st.multiselect(
             "Выбранные назначения (пусто — все)",
             [a["id"] for a in assignments],
+            placeholder="Все назначения",
             format_func=lambda key: next(
                 f"{a['tab_no']} · {a['project_code']}" for a in assignments if a["id"] == key
             ),

@@ -41,6 +41,8 @@ def test_every_screen_opens_with_loaded_samples(app):
     ui.button(key="load_demo").click().run()
     assert not ui.exception
     for page in (
+        "Реестр",
+        "Калькулятор",
         "Обзор",
         "Сотрудники",
         "Проекты",
@@ -208,3 +210,18 @@ def test_employee_and_manager_cabinets_enforce_ui_scope(app):
     ui.selectbox(key="role").set_value("Группа СОВ").run()
     assert not ui.exception
     assert ui.radio(key="page")
+
+
+def test_registry_to_calculator(app):
+    ui, _ = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    navigate(ui, "Реестр")
+    assert ui.dataframe
+    ui.checkbox(key="reg_overdue").check().run()
+    assert not ui.exception
+    ui.button(key="reg_open_calc").click().run()
+    assert not ui.exception
+    assert ui.radio(key="page").value == "Калькулятор"
+    assert len(ui.multiselect(key="calc_selection").value) == 1
+    assert ui.expander

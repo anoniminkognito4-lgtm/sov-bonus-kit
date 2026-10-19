@@ -50,10 +50,7 @@ def csv_bytes(columns, rows):
 
 
 def excel_bytes(sheets):
-    workbook = Workbook()
-    workbook.properties.created = datetime(2000, 1, 1)
-    workbook.properties.modified = datetime(2000, 1, 1)
-    workbook.remove(workbook.active)
+    workbook = new_workbook()
     for name, (columns, rows) in sheets.items():
         sheet = workbook.create_sheet(name[:31])
         sheet.append(list(columns))
@@ -75,6 +72,18 @@ def excel_bytes(sheets):
         for index, column in enumerate(sheet.columns, 1):
             width = min(48, max(14, max(len(str(cell.value or "")) for cell in column) + 2))
             sheet.column_dimensions[get_column_letter(index)].width = width
+    return stable_bytes(workbook)
+
+
+def new_workbook():
+    workbook = Workbook()
+    workbook.properties.created = datetime(2000, 1, 1)
+    workbook.properties.modified = datetime(2000, 1, 1)
+    workbook.remove(workbook.active)
+    return workbook
+
+
+def stable_bytes(workbook):
     result = BytesIO()
     workbook.save(result)
     workbook.close()

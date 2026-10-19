@@ -47,6 +47,7 @@ def render_redistribution(service, quarter):
             "Вехи письма",
             [m["name"] for m in milestones],
             default=[milestones[0]["name"]],
+            placeholder="Выберите вехи",
             key="rd_ms",
         )
         if not names:
