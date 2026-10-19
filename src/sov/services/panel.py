@@ -48,6 +48,19 @@ def require_admin(actor):
         raise PermissionError("Действие доступно только Группе СОВ")
 
 
+def _decision_problems(result, decisions):
+    for row, _ in decisions:
+        if row["kind"] == "redistribution":
+            result["problems"].append(
+                {
+                    "code": "MANUAL_CALC",
+                    "tab_no": result["employees"][0]["tab_no"],
+                    "blocking": True,
+                    "message": "Перераспределение требует расчёта; автоматизация — M6",
+                }
+            )
+
+
 def _domain_insert(connection, table_name, data, time, actor, basis):
     table = TABLES[table_name]
     after = {
@@ -122,6 +135,20 @@ class PanelService:
     def decisions(self):
         require_admin(self.actor)
         return self.registry.rows("manual_decision")
+
+    def simulate(self, assignment_id, changes, *, as_of, historical=False):
+        """Чтение согласованного входа без аудита и сохранения сценария."""
+        from sov.services.scenario import simulate
+
+        require_admin(self.actor)
+        with self.registry.engine.connect() as connection:
+            connection.exec_driver_sql("BEGIN")
+            adapter = RegistryAdapter(self.registry, connection)
+            case, decisions = self._case_with_decisions(adapter, assignment_id)
+            result = simulate(case, changes, as_of=as_of, historical=historical)
+            for key in ("baseline", "scenario"):
+                _decision_problems(result[key], decisions)
+            return result
 
     def save_decision(self, kind, assignment_id, payload, basis, file_ref):
         require_admin(self.actor)
@@ -227,16 +254,7 @@ class PanelService:
             case, decisions = self._case_with_decisions(adapter, identifier)
             result = calculate_case(case)
             employee = result["employees"][0]
-            for row, payload in decisions:
-                if row["kind"] == "redistribution":
-                    result["problems"].append(
-                        {
-                            "code": "MANUAL_CALC",
-                            "tab_no": employee["tab_no"],
-                            "blocking": True,
-                            "message": "Перераспределение требует расчёта; автоматизация — M6",
-                        }
-                    )
+            _decision_problems(result, decisions)
             source = adapter.one("assignment", id=identifier)
             hr = adapter.one("employee", tab_no=source["tab_no"])
             project = adapter.one(

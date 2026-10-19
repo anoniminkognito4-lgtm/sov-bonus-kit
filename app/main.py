@@ -13,6 +13,7 @@ from sov.exports.files import payroll, problems_file, statement, summary_file
 from sov.loaders.batch import SAMPLE_ORDER
 from sov.registry.session import Registry
 from sov.services.panel import ADMIN, Actor, PanelService
+from sov.ui.scenario import render_scenario
 
 ROOT = Path(__file__).resolve().parents[1]
 st.set_page_config(page_title="СОВ · Расчёт бонусов", page_icon="◈", layout="wide")
@@ -57,6 +58,9 @@ page = st.sidebar.radio(
     key="page",
 )
 st.sidebar.caption("Данные хранятся локально. Расчёт работает без сети.")
+if st.session_state.get("_last_page") != page:
+    st.session_state.pop("_audited_card", None)
+    st.session_state["_last_page"] = page
 if "flash" in st.session_state:
     st.success(st.session_state.pop("flash"))
 
@@ -467,7 +471,10 @@ elif page == "Сотрудники":
                 format_func=lambda key: f"{people[key]['fio']} · {key}",
                 key="person_tab",
             )
-            service.view("employee", tab_no)
+            card = (str(registry.path), author, tab_no)
+            if st.session_state.get("_audited_card") != card:
+                service.view("employee", tab_no)
+                st.session_state["_audited_card"] = card
             person_assignments = [a for a in matching if a["tab_no"] == tab_no]
             identifier = st.selectbox(
                 "Назначение",
@@ -507,6 +514,7 @@ elif page == "Сотрудники":
                     table(
                         [r for r in service.decisions() if r["tab_no"] == tab_no], hide_index=True
                     )
+                render_scenario(service, identifier, value["case"], selected_quarter)
             except ValueError as error:
                 st.error(str(error))
 

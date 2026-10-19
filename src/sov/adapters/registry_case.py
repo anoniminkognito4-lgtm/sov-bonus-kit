@@ -4,17 +4,8 @@ from datetime import date, timedelta
 
 from sov.engine.calculate import calculate_case
 from sov.engine.params import DEFAULT_PARAMS
+from sov.engine.rules.kpi import milestone_kpis, quarter, quarter_add  # noqa: F401
 from sov.registry.session import json_text
-
-
-def quarter(value):
-    day = date.fromisoformat(value)
-    return f"{day.year}-Q{(day.month - 1) // 3 + 1}"
-
-
-def quarter_add(value, offset):
-    index = int(value[:4]) * 4 + int(value[-1]) - 1 + offset
-    return f"{index // 4}-Q{index % 4 + 1}"
 
 
 class RegistryAdapter:
@@ -129,22 +120,7 @@ class RegistryAdapter:
         current_npv = next((v for v in npvs.values() if v is not None), None)
         starts = self.rows("start_npv", assignment_id=identifier)
         kpi_rows = {r["quarter"]: r["kpi"] for r in self.rows("kpi", tab_no=employee["tab_no"])}
-        kpis = {}
-        last_quarter = None
-        for milestone in sorted(milestones, key=lambda r: r["closed_1c"] or r["plan"]):
-            period = quarter(milestone["closed_1c"] or milestone["fact"] or milestone["plan"])
-            first = (
-                quarter_add(last_quarter, 1) if last_quarter and period > last_quarter else period
-            )
-            values, cursor = [], first
-            while cursor <= period:
-                values.append(kpi_rows.get(cursor))
-                cursor = quarter_add(cursor, 1)
-            kpis[milestone["name"]] = (
-                sum(values) / len(values) if values and all(v is not None for v in values) else None
-            )
-            if milestone["closed_1c"] and kpis[milestone["name"]] is not None:
-                last_quarter = period
+        kpis = milestone_kpis(milestones, kpi_rows)
         checkpoint_base = final["fact"] or final["plan"] or end
         checkpoint_dates = [
             (
@@ -173,6 +149,7 @@ class RegistryAdapter:
             },
             "individual_dates": individual,
             "kpi": kpis,
+            "kpi_quarterly": kpi_rows,
         }
         if leave:
             person.update(

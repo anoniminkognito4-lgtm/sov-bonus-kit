@@ -97,3 +97,83 @@ def test_quarter_ui_load_preview_fix_calculate_close_export(app, tmp_path):
     download_buttons = ui.get("download_button")
     assert len(download_buttons) >= 3
     registry.dispose()
+
+
+def test_whatif_recalculates_resets_and_never_writes_registry(app):
+    from hashlib import sha256
+
+    ui, path = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    navigate(ui, "Сотрудники")
+    ui.selectbox(key="person_tab").set_value("T0026").run()
+    before = sha256(path.read_bytes()).hexdigest()
+    ui.button(key="whatif_open").click().run()
+    assert not ui.exception
+    assert any("Моделирование, не является обещанием выплаты" in x.value for x in ui.warning)
+    baseline = ui.session_state["wi_result"]["baseline"]
+    assert ui.session_state["wi_result"]["scenario"] == baseline
+    ui.number_input(key="wi_npv_q2").set_value(4_900_000_000.0).run()
+    assert not ui.exception
+    scenario = ui.session_state["wi_result"]["scenario"]
+    assert scenario["employees"][0]["payouts"][-1]["calc_status"] == "приостановлено"
+    ui.checkbox(key="wi_historical").check().run()
+    ui.checkbox(key="wi_date_on_2").check().run()
+    ui.radio(key="wi_date_mode_2").set_value("Сдвигом от плана").run()
+    ui.slider(key="wi_offset_2").set_value(-90).run()
+    assert not ui.exception
+    assert ui.session_state["wi_result"]["scenario"] != baseline
+    ui.button(key="wi_reset").click().run()
+    assert not ui.exception
+    assert not ui.checkbox(key="wi_historical").value
+    assert ui.session_state["wi_result"]["scenario"] == baseline
+    assert sha256(path.read_bytes()).hexdigest() == before
+    ui.selectbox(key="person_tab").set_value("T0008").run()
+    assert not ui.exception
+    assert not ui.session_state["wi_open"]
+    ui.button(key="whatif_open").click().run()
+    assert ui.session_state["wi_result"]["scenario"]["employees"][0]["tab_no"] == "T0008"
+    assert ui.session_state["wi_result"]["scenario"] == ui.session_state["wi_result"]["baseline"]
+
+
+def test_whatif_bs_kpi_and_salary_controls(app):
+    ui, _ = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    navigate(ui, "Сотрудники")
+    # Условный БС-сотрудник, контроль 60% -> 95%.
+    registry = Registry(app[1])
+    from sov.adapters.registry_case import RegistryAdapter
+
+    adapter = RegistryAdapter(registry)
+    assignment = next(
+        a
+        for a in adapter.state["assignment"]
+        if adapter.build_case(a["id"])["bs"].get("share_transferred") == 0.6
+        and a["category"] == "КУПК"
+    )
+    ui.selectbox(key="person_tab").set_value(assignment["tab_no"]).run()
+    ui.button(key="whatif_open").click().run()
+    ui.checkbox(key="wi_historical").check().run()
+    ui.slider(key="wi_bs").set_value(95.0).run()
+    assert not ui.exception
+    result = ui.session_state["wi_result"]
+    assert result["baseline"]["employees"][0]["k_bs"] == pytest.approx(0.94)
+    assert result["scenario"]["employees"][0]["k_bs"] == 1
+    ui.number_input(key="wi_bgb_0").set_value(3_000_000.0).run()
+    assert not ui.exception
+    assert (
+        ui.session_state["wi_result"]["scenario"]["employees"][0]["pb"]
+        != result["scenario"]["employees"][0]["pb"]
+    )
+    # МП: квартальный ползунок влияет на результат общего движка.
+    tab = next(a["tab_no"] for a in adapter.state["assignment"] if a["category"] == "МП")
+    ui.selectbox(key="person_tab").set_value(tab).run()
+    ui.button(key="whatif_open").click().run()
+    sliders = [slider for slider in ui.slider if slider.key.startswith("wi_kpi_")]
+    assert sliders
+    baseline = ui.session_state["wi_result"]["scenario"]
+    sliders[0].set_value(120.0).run()
+    assert not ui.exception
+    assert ui.session_state["wi_result"]["scenario"] != baseline
+    registry.dispose()
