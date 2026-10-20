@@ -433,6 +433,152 @@ class PanelService:
             self.registry.bump_revision(connection)
             return identifier
 
+    # --- Новый калькулятор (NEW_CALC) ---
+
+    def new_calc_draft(self, project, queue, stage):
+        """Отбор вех, шапка по умолчанию и предложения по команде для экрана."""
+        require_admin(self.actor)
+        from sov.services import new_calc
+
+        store = new_calc.Store(self.registry.rows)
+        header = new_calc.default_header(store, project, queue, stage)
+        return {
+            "selection": new_calc.select_milestones(store, project, queue, stage),
+            "header": header,
+            "team": new_calc.team_proposals(
+                self.registry.rows, store, project, queue, stage, header["start_date"]
+            ),
+            "store": store,
+        }
+
+    def create_calculator(self, project, queue, stage, header, team):
+        """Этап, набор вех и назначения — одной операцией с журналом и откатом."""
+        require_admin(self.actor)
+        from sov.loaders.service import apply_records
+        from sov.services import new_calc
+
+        store = new_calc.Store(self.registry.rows)
+        records, _ = new_calc.build_records(
+            self.registry.rows, store, project, queue, stage, header, team, self.actor.name
+        )
+        return apply_records(
+            self.registry,
+            records,
+            f"Новый калькулятор {project}/{queue}/{stage}",
+            self.actor.name,
+            "new_calc",
+        )
+
+    def save_calc_set_change(self, payload, basis, file_ref):
+        """Решение calc_set_change: изменить зафиксированный набор вех калькулятора."""
+        require_admin(self.actor)
+        from sov.loaders.service import apply_records
+        from sov.services import new_calc
+
+        if not basis.strip() or not file_ref.strip():
+            raise ValueError("Укажите основание и ссылку на подтверждающий файл")
+        store = new_calc.Store(self.registry.rows)
+        records = new_calc.set_change_records(store, payload)
+        with self.registry.transaction() as connection:
+            _domain_insert(
+                connection,
+                "manual_decision",
+                {
+                    "id": str(uuid4()),
+                    "kind": "calc_set_change",
+                    "tab_no": None,
+                    "payload_json": json_text(dict(payload)),
+                    "basis": basis.strip(),
+                    "file_ref": file_ref.strip(),
+                    "author": self.actor.name,
+                },
+                timestamp(),
+                self.actor,
+                basis,
+            )
+            self.registry.bump_revision(connection)
+        return apply_records(
+            self.registry,
+            records,
+            f"Набор вех {payload['calc']}",
+            self.actor.name,
+            "calc_set_change",
+        )
+
+    def calc_file_settings(self):
+        """Настройки файла для параллельного расчёта: рядом с базой, не в git."""
+        from sov.services import new_calc
+
+        path = self.registry.path.parent / "settings" / "new_calc.json"
+        if path.exists():
+            return {**new_calc.DEFAULT_SETTINGS, **json.loads(path.read_text(encoding="utf-8"))}
+        return json.loads(json.dumps(new_calc.DEFAULT_SETTINGS))
+
+    def save_calc_file_settings(self, settings):
+        require_admin(self.actor)
+        path = self.registry.path.parent / "settings" / "new_calc.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def export_calc_file(self, project, queue, stage, template, folder, name_pattern, header=None):
+        """Файл калькулятора из копии шаблона (NEW_CALC §7); шаблон не меняется."""
+        require_admin(self.actor)
+        import re
+        from pathlib import Path
+
+        from sov.exports.calc_file import write_calculator_file
+        from sov.registry.models import milestone_raw_row
+        from sov.services import new_calc
+
+        store = new_calc.Store(self.registry.rows)
+        project_row = next(r for r in self.registry.rows("project") if r["project_code"] == project)
+        with self.registry.engine.connect() as connection:
+            raw = connection.execute(
+                select(
+                    milestone_raw_row.c.upload_id,
+                    milestone_raw_row.c.row_no,
+                    milestone_raw_row.c.raw_json,
+                    upload.c.applied_at,
+                )
+                .join(upload, upload.c.id == milestone_raw_row.c.upload_id)
+                .where(upload.c.rolled_back_at.is_(None))
+                .order_by(upload.c.applied_at.desc(), milestone_raw_row.c.row_no)
+            ).all()
+        raw_rows = [(r.upload_id, r.row_no, json.loads(r.raw_json)) for r in raw]
+        data = new_calc.calc_file_data(store, project_row, queue, stage, raw_rows, header)
+        template = Path(template)
+        name = name_pattern.format(project=project, queue=queue or "-", stage=stage)
+        name = re.sub(r'[\\/:*?"<>|]+', "_", name) + template.suffix
+        report = write_calculator_file(template, Path(folder) / name, data)
+        with self.registry.transaction() as connection:
+            _audit(
+                connection,
+                self.actor.name,
+                timestamp(),
+                "calc_file",
+                f"{project}/{queue}/{stage}",
+                None,
+                {
+                    "file": report["file"],
+                    "template": str(template),
+                    "status": report["status"],
+                    "written": report["written"],
+                    "overflow": report["overflow"],
+                    "problems": [p["code"] for p in report["problems"]],
+                    "check": report["check"],
+                },
+                "Файл калькулятора для параллельного расчёта",
+            )
+        return report
+
+    def new_calc_hints(self, as_of):
+        """Подсказки «Обзора»: пора создать калькулятор, набор вех изменился."""
+        require_admin(self.actor)
+        from sov.services import new_calc
+
+        store = new_calc.Store(self.registry.rows)
+        return new_calc.stage_due(store, as_of) + new_calc.set_changes(store)
+
     def _case_with_decisions(self, adapter, identifier):
         case = adapter.build_case(identifier)
         target = adapter.one("assignment", id=identifier)

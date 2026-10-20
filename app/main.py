@@ -23,6 +23,7 @@ from sov.ui.milestones import (
     render_milestone_preview,
     render_project_milestones,
 )
+from sov.ui.new_calc import open_new_calc, render_hints, render_new_calc
 from sov.ui.redistribution import render_redistribution
 from sov.ui.registry import render_calculator, render_registry
 from sov.ui.scenario import render_scenario
@@ -104,6 +105,7 @@ page = st.sidebar.radio(
         "Обзор",
         "Сотрудники",
         "Проекты",
+        "Новый калькулятор",
         "Загрузка",
         "Проблемы",
         "Ручные решения",
@@ -364,8 +366,12 @@ if page == "Реестр":
 elif page == "Калькулятор":
     render_calculator(service, RegistryView(registry.rows), selected_quarter, as_of, closed)
 
+elif page == "Новый калькулятор":
+    render_new_calc(service, registry, ROOT)
+
 elif page == "Обзор":
     st.subheader(f"Квартал {selected_quarter}")
+    render_hints(service, as_of)
     a, b, c, d = st.columns(4)
     a.metric("Сотрудники", len(employees))
     b.metric("Проекты и очереди", len(projects))
@@ -614,6 +620,12 @@ elif page == "Проекты":
         table(
             [r for r in assignments if r["project_code"] == project["project_code"]],
             hide_index=True,
+        )
+        st.button(
+            "Новый калькулятор для этой очереди",
+            key="open_new_calc",
+            on_click=open_new_calc,
+            args=(project["project_code"], project["queue"], 1),
         )
         render_project_milestones(service, registry, project["project_code"])
     else:

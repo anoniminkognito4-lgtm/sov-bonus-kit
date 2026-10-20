@@ -1,5 +1,7 @@
 """Smoke-проверки Streamlit и полный сценарий условного квартала через UI."""
 
+from datetime import date
+
 import pytest
 from conftest import ROOT
 from streamlit.testing.v1 import AppTest
@@ -241,3 +243,24 @@ def test_milestone_seed_and_project_tree(app):
     navigate(ui, "Проекты")
     assert ui.selectbox(key="ms_history").options
     assert not ui.exception
+
+
+def test_new_calc_screen_creates_calculator(app):
+    ui, path = app
+    navigate(ui, "Загрузка")
+    for name in ("milestones/ms_projects.csv", "milestones/ms_seed.xlsx"):
+        ui.selectbox(key="sample_file").set_value(name).run()
+        ui.button(key="preview_upload").click().run()
+        ui.button(key="apply_upload").click().run()
+        assert not ui.exception
+    navigate(ui, "Обзор")
+    assert not ui.exception
+    navigate(ui, "Новый калькулятор")
+    ui.selectbox(key="nc_project").set_value("TP-M1").run()
+    ui.number_input(key="nc_stage").set_value(4).run()
+    ui.date_input(key="nc_f2_TP-M1_1_4").set_value(date(2025, 12, 1)).run()
+    assert not ui.exception and ui.dataframe
+    ui.button(key="nc_create").click().run()
+    assert not ui.exception
+    assert any("Калькулятор создан" in s.value for s in ui.success)
+    assert Registry(path).rows("calc_milestone")

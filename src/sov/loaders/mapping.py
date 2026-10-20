@@ -14,6 +14,7 @@ KEYS = {
     "milestone": ("milestone_code",),
     "milestone_plan_version": ("milestone_code", "version"),
     "milestone_key": ("natural_key",),
+    "calc_milestone": ("project_code", "queue", "stage", "milestone_code"),
     "assignment": ("id",),
     "assignment_load": ("assignment_id", "date_from"),
     "individual_date": ("tab_no", "milestone_code"),

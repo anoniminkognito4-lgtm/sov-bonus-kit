@@ -138,7 +138,8 @@
 | employee | tab_no | fio, position, department, hire_date, dismissal_date, probation_end, probation_result |
 | bgb_period | tab_no, date_from | bgb, date_to |
 | project | project_code, queue | name, blocks, is_exception, sale_date, handover_date |
-| stage | project_code, queue, stage | start_date, key_milestone_code, is_completion |
+| stage | project_code, queue, stage | start_date, key_milestone_code, key_milestone_name, is_completion, continues_from_prev |
+| calc_milestone | project_code, queue, stage, milestone_code | order, source (`queue` / `project`), added_by, active — набор вех калькулятора (NEW_CALC §2); `active = 0` — веха убрана решением calc_set_change |
 | milestone | milestone_code | project_code, queue (`""` — веха проекта без очереди), stage, name, is_key, status (значение 1С), fact_date, closed_1c_date, queue_raw, name_raw, template, kind, criterion, extra_json, first_file_hash |
 | milestone_plan_version | milestone_code, version | plan_date, basis, effective_date (дата выгрузки 1С), file_hash |
 | milestone_key | natural_key | milestone_code — `[проект, очередь 1С, этап, наименование]` → код вехи (MILESTONES §3.2) |

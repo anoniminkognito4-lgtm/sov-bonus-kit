@@ -13,8 +13,11 @@ SCHEMAS = {
     "project": "project_code queue name blocks is_exception:i sale_date handover_date",
     "stage": (
         "project_code queue stage:i start_date key_milestone_code key_milestone_name "
-        "is_completion:i "
+        "is_completion:i continues_from_prev:i "
     ),
+    # Калькулятор = этап очереди с зафиксированным набором вех (NEW_CALC §2).
+    # active = 0 — веха убрана из набора решением calc_set_change.
+    "calc_milestone": "project_code queue stage:i milestone_code order:i source added_by active:i",
     "milestone": (
         "milestone_code project_code queue stage:i name is_key:i status fact_date closed_1c_date "
         "queue_raw name_raw template kind criterion extra_json first_file_hash "

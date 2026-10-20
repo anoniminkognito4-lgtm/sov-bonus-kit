@@ -254,65 +254,111 @@ def apply_preview(registry, preview):
                     "noop": True,
                     "unmatched": len(current.unmatched),
                 }
-        identifier, time = str(uuid4()), timestamp()
-        history = []
-        for change in current.changes:
-            table, key, before = change["table"], change["key"], change["before"]
-            after = {
-                **change["data"],
-                "row_key": key,
-                "valid_from": time,
-                "valid_to": None,
-                "source_file_id": identifier,
-                "created_at": before["created_at"] if before else time,
-            }
-            target = TABLES[table]
-            if before is None:
-                connection.execute(insert(target).values(**after))
-            else:
-                connection.execute(update(target).where(target.c.row_key == key).values(**after))
-            # Сохраняем все поля, в том числе NULL, как они реально записаны в SQLite.
-            after = dict(
-                connection.execute(select(target).where(target.c.row_key == key)).mappings().one()
-            )
-            history.append({"table": table, "key": key, "before": before, "after": after})
-            _write_version(connection, table, key, after, time, identifier)
-            _audit(connection, preview.author, time, table, key, before, after, preview.path.name)
-        for line, raw in current.raw_rows:
-            connection.execute(
-                insert(milestone_raw_row).values(
-                    upload_id=identifier, row_no=line, raw_json=_raw_json(raw)
-                )
-            )
-        connection.execute(
-            insert(upload).values(
-                id=identifier,
-                file_name=preview.path.name,
-                file_hash=preview.file_hash,
-                type=preview.kind,
-                author=preview.author,
-                uploaded_at=time,
-                applied_at=time,
-                changes_json=json_text(history),
-            )
-        )
-        _audit(
+        identifier = _write_changes(
             connection,
+            current.changes,
             preview.author,
-            time,
-            "upload",
-            identifier,
-            None,
-            {"file": preview.path.name, "summary": current.summary},
-            "Применение загрузки",
+            preview.path.name,
+            preview.file_hash,
+            preview.kind,
+            current.summary,
+            current.raw_rows,
         )
         registry.bump_revision(connection)
         return {
             "upload_id": identifier,
-            "changed": len(history),
+            "changed": len(current.changes),
             "noop": False,
             "unmatched": len(current.unmatched),
         }
+
+
+def _write_changes(connection, changes, author, label, file_hash, kind, summary, raw_rows=()):
+    """Записать изменения с версиями и журналом; одна запись upload — для отката."""
+    identifier, time = str(uuid4()), timestamp()
+    history = []
+    for change in changes:
+        table, key, before = change["table"], change["key"], change["before"]
+        after = {
+            **change["data"],
+            "row_key": key,
+            "valid_from": time,
+            "valid_to": None,
+            "source_file_id": identifier,
+            "created_at": before["created_at"] if before else time,
+        }
+        target = TABLES[table]
+        if before is None:
+            connection.execute(insert(target).values(**after))
+        else:
+            connection.execute(update(target).where(target.c.row_key == key).values(**after))
+        # Сохраняем все поля, в том числе NULL, как они реально записаны в SQLite.
+        after = dict(
+            connection.execute(select(target).where(target.c.row_key == key)).mappings().one()
+        )
+        history.append({"table": table, "key": key, "before": before, "after": after})
+        _write_version(connection, table, key, after, time, identifier)
+        _audit(connection, author, time, table, key, before, after, label)
+    for line, raw in raw_rows:
+        connection.execute(
+            insert(milestone_raw_row).values(
+                upload_id=identifier, row_no=line, raw_json=_raw_json(raw)
+            )
+        )
+    connection.execute(
+        insert(upload).values(
+            id=identifier,
+            file_name=label,
+            file_hash=file_hash,
+            type=kind,
+            author=author,
+            uploaded_at=time,
+            applied_at=time,
+            changes_json=json_text(history),
+        )
+    )
+    _audit(
+        connection,
+        author,
+        time,
+        "upload",
+        identifier,
+        None,
+        {"file": label, "summary": summary},
+        "Применение загрузки",
+    )
+    return identifier
+
+
+def apply_records(registry, records, label, author, kind):
+    """Применить записи, собранные в системе (например, новый калькулятор), одной операцией.
+
+    `records` — [(таблица, данные)]. Журнал и откат — как у загрузки файла.
+    """
+    with registry.transaction() as connection:
+        state = {
+            name: {r["row_key"]: dict(r) for r in rows}
+            for name, rows in registry.domain_state(connection).items()
+        }
+        changes, seen = [], set()
+        for table, data in records:
+            fields = {c.name for c in TABLES[table].columns} - META_FIELDS
+            data = {k: v for k, v in data.items() if k in fields}
+            key = row_key(table, data)
+            if (table, key) in seen:
+                raise ValueError(f"Повторяющаяся запись: {table}, {key}")
+            seen.add((table, key))
+            before = state[table].get(key)
+            if before is None or any(before.get(k) != data.get(k) for k in data):
+                changes.append({"table": table, "key": key, "before": before, "data": data})
+        if not changes:
+            return {"upload_id": None, "changed": 0}
+        digest = hashlib.sha256(json_text(changes).encode()).hexdigest()
+        identifier = _write_changes(
+            connection, changes, author, label, digest, kind, {"changed": len(changes)}
+        )
+        registry.bump_revision(connection)
+        return {"upload_id": identifier, "changed": len(changes)}
 
 
 def _check_references(state):
@@ -354,7 +400,13 @@ def _check_references(state):
         for row in state[table].values():
             if not exists("assignment", id=row["assignment_id"]):
                 raise ValueError("Откат оставит строки без назначения")
-    for table in ("individual_date", "redistribution", "milestone_plan_version", "milestone_key"):
+    for table in (
+        "individual_date",
+        "redistribution",
+        "milestone_plan_version",
+        "milestone_key",
+        "calc_milestone",
+    ):
         for row in state[table].values():
             if not exists("milestone", milestone_code=row["milestone_code"]):
                 raise ValueError("Откат оставит строки без вехи")

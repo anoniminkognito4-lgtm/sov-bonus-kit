@@ -93,7 +93,20 @@ class RegistryAdapter:
         project = self.one("project", project_code=code, queue=queue)
         stage = self.one("stage", project_code=code, queue=queue, stage=stage_number)
         employee = self.one("employee", tab_no=assignment["tab_no"])
-        source_ms = self.rows("milestone", project_code=code, queue=queue, stage=stage_number)
+        fixed = [
+            r["milestone_code"]
+            for r in sorted(
+                self.rows("calc_milestone", project_code=code, queue=queue, stage=stage_number),
+                key=lambda r: r["order"],
+            )
+            if r["active"]
+        ]
+        if fixed:
+            # Набор вех калькулятора зафиксирован при создании (NEW_CALC §4.3); даты — из хранилища.
+            codes = {m["milestone_code"]: m for m in self.state["milestone"]}
+            source_ms = [codes[c] for c in fixed if c in codes]
+        else:
+            source_ms = self.rows("milestone", project_code=code, queue=queue, stage=stage_number)
         milestones, final, individual = [], None, {}
         excluded_ms = []
         extend = False
@@ -271,6 +284,19 @@ class RegistryAdapter:
                 npv_stage_end=self.npv(code, final_quarter),
             )
         expenses = self.rows("stage5_expense", project_code=code, queue=queue, stage=stage_number)
+        changed_set = any(
+            json.loads(r["payload_json"]).get("calc") == f"{code}/{queue}/{stage_number}"
+            for r in self.state["manual_decision"]
+            if r["kind"] == "calc_set_change"
+        )
+        stage_ids = {
+            a["id"]
+            for a in self.rows("assignment", project_code=code, queue=queue, stage=stage_number)
+        }
+        # NEW_CALC §4.3: набор изменён после начислений — до правила переноса вех ручной расчёт.
+        set_changed_after_accrual = changed_set and any(
+            r["assignment_id"] in stage_ids for r in self.state["accrual"]
+        )
         bs_enabled = "БС" in (project["blocks"] or "")
         case = {
             "id": identifier,
@@ -278,7 +304,7 @@ class RegistryAdapter:
             "project_code": code,
             "queue": queue,
             "stage": stage_number,
-            "is_exception": bool(project["is_exception"]),
+            "is_exception": bool(project["is_exception"]) or set_changed_after_accrual,
             "handover_date": project["handover_date"],
             "sale": {
                 "date": project["sale_date"],
