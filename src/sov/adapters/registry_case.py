@@ -113,6 +113,8 @@ class RegistryAdapter:
             plans = self.rows("milestone_plan_version", milestone_code=source["milestone_code"])
             chosen = min if excluded else max
             plan = chosen(plans, key=lambda r: r["version"])["plan_date"] if plans else None
+            if plan is None and not source["is_key"]:
+                continue  # MS_NO_PLAN_DATE: без плана веха не участвует в расчёте
             if len(plans) > 1 and plan > min(r["plan_date"] for r in plans):
                 extend = True
             milestone = {

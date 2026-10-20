@@ -18,6 +18,11 @@ from sov.services.cabinet import CabinetService
 from sov.services.panel import ADMIN, Actor, PanelService
 from sov.services.registry_view import RegistryView
 from sov.ui.cabinet import render_cabinet
+from sov.ui.milestones import (
+    milestone_options,
+    render_milestone_preview,
+    render_project_milestones,
+)
 from sov.ui.redistribution import render_redistribution
 from sov.ui.registry import render_calculator, render_registry
 from sov.ui.scenario import render_scenario
@@ -412,8 +417,14 @@ elif page == "Загрузка":
             )
         except ValueError as error:
             st.error(str(error))
-    source_name = st.selectbox("Условный образец", SAMPLE_ORDER, key="sample_file")
+    milestone_samples = sorted(
+        f"milestones/{p.name}" for p in (ROOT / "samples/milestones").glob("*.*")
+    )
+    source_name = st.selectbox(
+        "Условный образец", [*SAMPLE_ORDER, *milestone_samples], key="sample_file"
+    )
     uploaded = st.file_uploader("Или выберите условный файл", type=["csv", "xlsx"])
+    options = milestone_options()
     if st.button("Предпросмотр", key="preview_upload"):
         try:
             source = ROOT / "samples" / source_name
@@ -422,7 +433,7 @@ elif page == "Загрузка":
                 folder.mkdir(parents=True, exist_ok=True)
                 source = folder / Path(uploaded.name).name
                 source.write_bytes(uploaded.getvalue())
-            st.session_state["upload_preview"] = service.preview(source)
+            st.session_state["upload_preview"] = service.preview(source, options)
         except (ValueError, OSError) as error:
             st.error(str(error))
     preview = st.session_state.get("upload_preview")
@@ -432,6 +443,8 @@ elif page == "Загрузка":
             f"{TYPE_LABELS.get(preview.kind, preview.kind)}"
         )
         table([preview.summary], hide_index=True)
+        if preview.kind == "milestone":
+            render_milestone_preview(preview)
         if preview.changes:
             table(
                 [
@@ -592,20 +605,6 @@ elif page == "Проекты":
             [r for r in registry.rows("stage") if r["project_code"] == project["project_code"]],
             hide_index=True,
         )
-        st.write("Вехи")
-        latest_plans = {}
-        for plan in registry.rows("milestone_plan_version"):
-            code = plan["milestone_code"]
-            if code not in latest_plans or plan["version"] > latest_plans[code]["version"]:
-                latest_plans[code] = plan
-        table(
-            [
-                {**r, "plan": latest_plans.get(r["milestone_code"], {}).get("plan_date")}
-                for r in registry.rows("milestone")
-                if r["project_code"] == project["project_code"]
-            ],
-            hide_index=True,
-        )
         st.write("NPV по кварталам")
         table(
             [r for r in registry.rows("npv") if r["project_code"] == project["project_code"]],
@@ -616,6 +615,7 @@ elif page == "Проекты":
             [r for r in assignments if r["project_code"] == project["project_code"]],
             hide_index=True,
         )
+        render_project_milestones(service, registry, project["project_code"])
     else:
         st.info("Справочник проектов пока пуст.")
 

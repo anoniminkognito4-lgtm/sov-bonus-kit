@@ -139,8 +139,10 @@
 | bgb_period | tab_no, date_from | bgb, date_to |
 | project | project_code, queue | name, blocks, is_exception, sale_date, handover_date |
 | stage | project_code, queue, stage | start_date, key_milestone_code, is_completion |
-| milestone | milestone_code | project_code, queue, stage, name, is_key, status, fact_date, closed_1c_date |
-| milestone_plan_version | milestone_code, version | plan_date, basis, valid_from |
+| milestone | milestone_code | project_code, queue (`""` — веха проекта без очереди), stage, name, is_key, status (значение 1С), fact_date, closed_1c_date, queue_raw, name_raw, template, kind, criterion, extra_json, first_file_hash |
+| milestone_plan_version | milestone_code, version | plan_date, basis, effective_date (дата выгрузки 1С), file_hash |
+| milestone_key | natural_key | milestone_code — `[проект, очередь 1С, этап, наименование]` → код вехи (MILESTONES §3.2) |
+| milestone_raw_row | id | upload_id, row_no, raw_json — строка выгрузки как есть; не предметная таблица, в снимок квартала не входит, удаляется откатом |
 | assignment | id | tab_no, project_code, queue, stage, sov_type, category, role, position, date_from, date_to, end_reason, from_prev_stage |
 | assignment_load | assignment_id, date_from | load, date_to |
 | individual_date | tab_no, milestone_code | individual_plan, basis |

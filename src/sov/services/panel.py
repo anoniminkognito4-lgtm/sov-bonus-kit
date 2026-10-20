@@ -86,9 +86,9 @@ class PanelService:
     def __init__(self, registry, actor):
         self.registry, self.actor = registry, actor
 
-    def preview(self, path):
+    def preview(self, path, options=None):
         require_admin(self.actor)
-        return prepare_upload(self.registry, path, self.actor.name)
+        return prepare_upload(self.registry, path, self.actor.name, options)
 
     def apply(self, preview):
         require_admin(self.actor)

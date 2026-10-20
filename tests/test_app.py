@@ -225,3 +225,19 @@ def test_registry_to_calculator(app):
     assert ui.radio(key="page").value == "Калькулятор"
     assert len(ui.multiselect(key="calc_selection").value) == 1
     assert ui.expander
+
+
+def test_milestone_seed_and_project_tree(app):
+    ui, _ = app
+    navigate(ui, "Загрузка")
+    for name in ("milestones/ms_projects.csv", "milestones/ms_seed.xlsx"):
+        ui.selectbox(key="sample_file").set_value(name).run()
+        if name.endswith(".xlsx"):
+            ui.checkbox(key="ms_seed").check().run()
+        ui.button(key="preview_upload").click().run()
+        assert not ui.exception
+        ui.button(key="apply_upload").click().run()
+        assert not ui.exception
+    navigate(ui, "Проекты")
+    assert ui.selectbox(key="ms_history").options
+    assert not ui.exception
