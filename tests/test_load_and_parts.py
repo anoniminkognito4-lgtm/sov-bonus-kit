@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 from conftest import ROOT, read_json
@@ -16,6 +17,7 @@ from sov.adapters.load import (
 )
 from sov.engine.calculate import calculate_case
 from sov.engine.params import DEFAULT_PARAMS, params_for_quarter
+from sov.engine.rules.budget import project_bonus
 from sov.registry.models import TABLES
 from sov.registry.session import Registry
 from sov.services.panel import Actor, PanelService
@@ -80,15 +82,52 @@ def test_second_project_above_100_percent_keeps_actual_shares():
     assert loads["b"][0]["load"] == pytest.approx(0.5)
 
 
-def test_single_project_below_100_percent_is_not_raised():
+QUEUES_ONLY = replace(DEFAULT_PARAMS, load_normalization="только деление на очереди")
+
+
+def test_single_project_below_100_percent_by_mode():
+    # И-9: «буквально» (по умолчанию, как макрокнига) поднимает 25% до 100%.
     rows = [assignment("a", "P", "1", 4, "2026-07-01", position="Менеджер по разработке продукта")]
     loads, _ = table_loads(rows, "ДРП", lambda a: False)
+    assert loads["a"] == [{"date_from": "2026-07-01", "date_to": None, "load": 1.0}]
+    loads, _ = table_loads(rows, "ДРП", lambda a: False, QUEUES_ONLY)
     assert loads["a"] == [{"date_from": "2026-07-01", "date_to": None, "load": 0.25}]
+
+
+@pytest.mark.parametrize(
+    "rows, block, literal, queues_only",
+    [
+        # К1: ДУП, ГИП, один проект на 5 этапе (v3: 20%).
+        ([("A", "1", 5)], "ДУП", 2_400_000, 480_000),
+        # К3: проект А на 5 этапе + проект Б на 2 этапе: сумма 120% — режимы совпадают.
+        ([("A", "1", 5), ("B", "1", 2)], "ДУП", 2_880_000, 2_880_000),
+        # К4: две очереди проекта А на 4 этапе: 37,5% + 37,5% → 50% + 50% в обоих режимах.
+        ([("A", "1", 4), ("A", "2", 4)], "ДУП", 2_400_000, 2_400_000),
+    ],
+)
+def test_pb_difference_between_modes(rows, block, literal, queues_only):
+    items = [
+        assignment(f"a{i}", p, q, st, "2026-10-01", "2027-09-30", "Главный инженер проекта")
+        for i, (p, q, st) in enumerate(rows)
+    ]
+    for params, expected in ((DEFAULT_PARAMS, literal), (QUEUES_ONLY, queues_only)):
+        loads, _ = table_loads(items, block, lambda a: False, params)
+        total = sum(
+            project_bonus(
+                [{"from": "2026-10-01", "to": "2027-09-30", "bgb": 2_400_000, "load": r["load"]}],
+                "2026-10-01",
+                "2027-09-30",
+                params,
+            )[0]
+            for a in items
+            for r in loads[a["id"]]
+        )
+        assert total == pytest.approx(expected)
 
 
 def test_edition_change_splits_period():
     rows = [assignment("a", "P", "1", 4, "2026-01-01", position="Менеджер по разработке продукта")]
-    loads, _ = table_loads(rows, "ДРП", lambda a: False)
+    loads, _ = table_loads(rows, "ДРП", lambda a: False, QUEUES_ONLY)
     assert [(r["date_from"], r["load"]) for r in loads["a"]] == [
         ("2026-01-01", 0.333),
         ("2026-07-01", 0.25),
@@ -218,9 +257,10 @@ def test_registry_uses_position_table_for_dup(panel):
     identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
     value = panel.calculate("2026-Q3", [identifier]).results[identifier]
     person = value["case"]["employees"][0]
-    assert {p["load"] for p in person["periods"]} == {0.75}  # 4 этап ГИП
+    # 4 этап ГИП — 75%; один проект, режим «буквально» доводит до 100% (И-9).
+    assert {p["load"] for p in person["periods"]} == {1.0}
     assert person["load_source"].startswith("таблица загрузки СОВ (ДУП")
-    assert {i["code"] for i in person["load_issues"]} == {"LOAD_FILE_DIFFERS"}
+    assert not person["load_issues"]
 
 
 def test_registry_unknown_position_falls_back_to_file(panel):

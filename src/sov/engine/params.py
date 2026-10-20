@@ -5,7 +5,7 @@ import math
 import re
 from dataclasses import dataclass, fields, replace
 
-_RPPP = ("Руководитель проекта по продукту",)
+_RPPP = ("Руководитель проекта по продукту", "Руководитель группы разработки продукта")
 _MRP = ("Менеджер по разработке продукта",)
 _RPP = ("Руководитель проекта проектирования",)
 _GIP = ("Главный инженер проекта",)
@@ -104,6 +104,8 @@ class SovParams:
     redistribution_limit: float = 0.3
     sale_extension_days: int = 14
     zrp_threshold: float = 1.0  # D-047, закрывает И-1
+    # И-9 (открыто): «буквально» | «только деление на очереди», см. adapters/load.py.
+    load_normalization: str = "буквально"
     # Статусы вех из 1С, которые движок понимает; прочие — проблема, веха не учитывается.
     milestone_statuses: tuple[str, ...] = ("Назначена", "Выполнена")
     # Блок таблицы загрузки по подразделению: (блок, слова в названии подразделения).
@@ -247,6 +249,8 @@ def params_for_quarter(rows, period):
         for low, high in (result.financial_bounds, result.rp_financial_bounds, *result.rank_ranges)
     ):
         raise ValueError("Нижняя граница параметра выше верхней")
+    if result.load_normalization not in ("буквально", "только деление на очереди"):
+        raise ValueError("load_normalization: «буквально» или «только деление на очереди»")
     if any(v <= 0 for v in result.rank_thresholds):
         raise ValueError("Пороги рангов должны быть положительными")
     return result

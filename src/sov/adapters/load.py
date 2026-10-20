@@ -12,6 +12,8 @@ from sov.engine.rules.load import project_load, rp_load
 
 OPEN_END = "9999-12-31"
 GAPS = {"LOAD_POSITION_UNKNOWN", "RP_SET_MISSING_PROJECT"}
+NORMALIZE_LITERAL = "буквально"
+NORMALIZE_QUEUES = "только деление на очереди"
 
 
 def _norm(text):
@@ -85,8 +87,11 @@ def _merge(rows):
 def table_loads(assignments, block, completion_of, params=DEFAULT_PARAMS):
     """Загрузка по таблице должностей с делением на очереди и приведением к 100%.
 
-    И-9: к 100% приводится только сумма, уменьшенная делением на очереди (сл. 14–15);
-    одиночный проект с процентом таблицы ниже 100% не поднимается.
+    И-9 (открыто, параметр load_normalization):
+    «буквально» — сумма меньше 100% по всем проектам и очередям приводится к 100%,
+    как в действующей макрокниге (=ЕСЛИ(сумма>=100%; загрузка; загрузка/сумма));
+    «только деление на очереди» — к 100% приводится только сумма, уменьшенная делением
+    на очереди; одиночный проект с процентом таблицы ниже 100% не поднимается.
     """
     dates = {row[0] for row in params.position_loads if row[0] > "0001-01-01"}
     result = {a["id"]: [] for a in assignments}
@@ -108,7 +113,8 @@ def table_loads(assignments, block, completion_of, params=DEFAULT_PARAMS):
         }
         total = sum(shares.values())
         split = any(len(q) > 1 for q in queues.values())
-        if split and 0 < total < 1 and len(shares) == len(active):
+        literal = params.load_normalization == NORMALIZE_LITERAL
+        if (literal or split) and 0 < total < 1 and len(shares) == len(active):
             shares = {key: value / total for key, value in shares.items()}
         for key, value in shares.items():
             result[key].append({"date_from": begin, "date_to": end, "load": value})
