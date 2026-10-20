@@ -106,6 +106,15 @@ def milestone_copy(tmp_path, end, fact=None):
 
 def test_extension_preserves_accrued_advance_and_closed_export(panel, tmp_path):  # noqa: F811
     fix_sources(panel, tmp_path)
+    key = next(
+        m["milestone_code"]
+        for m in panel.registry.rows("milestone")
+        if m["project_code"] == "TP-T01" and m["is_key"]
+    )
+    # MILESTONES §6.3: снять факт ключевой вехи можно только решением.
+    panel.save_milestone_decision(
+        "fact_change_accept", {"milestone_code": key, "fact": None}, "Условное письмо", "f.pdf"
+    )
     apply(panel, milestone_copy(tmp_path, "30.09.2026"))
     identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
     old_case = panel.calculate("2026-Q3", [identifier]).results[identifier]["case"]

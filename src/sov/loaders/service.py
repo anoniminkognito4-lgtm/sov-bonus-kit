@@ -2,16 +2,25 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import delete, insert, select, update
 
 from sov.engine.params import params_for_quarter
+from sov.loaders import milestones
 from sov.loaders.formats import read_source
 from sov.loaders.mapping import Unmatched, find, map_row, row_key
-from sov.registry.models import TABLES, audit_log, record_version, snapshot, upload
+from sov.registry.models import (
+    TABLES,
+    audit_log,
+    milestone_raw_row,
+    record_version,
+    snapshot,
+    upload,
+)
 from sov.registry.session import json_text, timestamp
 
 META_FIELDS = {"row_key", "valid_from", "valid_to", "source_file_id", "created_at"}
@@ -30,6 +39,11 @@ class Preview:
     unmatched: tuple
     errors: tuple
     warnings: tuple
+    # Загрузка вех (MILESTONES): проблемы §7, сводка, параметры и строки файла как есть.
+    problems: tuple = ()
+    stats: dict = field(default_factory=dict)
+    options: dict = field(default_factory=dict)
+    raw_rows: tuple = ()
 
     @property
     def summary(self):
@@ -39,6 +53,7 @@ class Preview:
             "unchanged": self.unchanged,
             "unmatched": len(self.unmatched),
             "errors": len(self.errors),
+            "blocked": sum(p["code"] in milestones.SKIP_CODES for p in self.problems),
         }
 
 
@@ -46,32 +61,61 @@ def _state_hash(state):
     return hashlib.sha256(json_text(state).encode()).hexdigest()
 
 
-def prepare_upload(registry, path, author="Группа СОВ"):
+def prepare_upload(registry, path, author="Группа СОВ", options=None):
+    """`options` для вех: export_date (ISO, по умолчанию дата изменения файла),
+    mode («update» или «seed» — начальная версия), sheet (лист выгрузки)."""
     with registry.engine.connect() as connection:
-        return _prepare(registry, path, author, connection)
+        return _prepare(registry, path, author, connection, dict(options or {}))
 
 
-def _prepare(registry, path, author, connection):
-    kind, file_hash, rows, errors = read_source(path)
+def _prepare(registry, path, author, connection, options=None):
+    options = dict(options or {})
+    meta = None
+    if Path(path).suffix.lower() in (".xlsx", ".xls", ".xlsm", ".xlsb"):
+        meta = milestones.read_workbook(path, options.get("sheet"))
+    if meta:
+        kind, errors, rows = "milestone", [], []
+        file_hash = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        options.setdefault(
+            "export_date", date.fromtimestamp(Path(path).stat().st_mtime).isoformat()
+        )
+        options.setdefault("mode", "update")
+    else:
+        kind, file_hash, rows, errors = read_source(path)
     if kind in ("case_map", "payroll_example"):
         raise ValueError("Это файл сверки/пример выгрузки, а не источник реестра")
     original = registry.domain_state(connection)
     state = {name: {r["row_key"]: dict(r) for r in records} for name, records in original.items()}
-    pending, warnings, unmatched = {}, [], []
+    pending, warnings, unmatched, problems, stats = {}, [], [], [], {}
+
+    def add(line, records, row_warnings=()):
+        for table, data in records:
+            # Дополнительные колонки источника не являются полями реестра.
+            fields = {c.name for c in TABLES[table].columns} - META_FIELDS
+            data = {k: v for k, v in data.items() if k in fields}
+            key = row_key(table, data)
+            identity = (table, key)
+            if identity in pending and pending[identity] != data and table != "assignment":
+                raise ValueError(f"Конфликт повторяющихся строк: {table}, {key}")
+            pending[identity] = data
+            state[table][key] = {**data, "row_key": key}
+        warnings.extend({"line": line, "message": message} for message in row_warnings)
+
+    if meta:
+        plan = milestones.plan_upload(
+            meta, state, file_hash, options["export_date"], options["mode"], options.get("sheet")
+        )
+        problems, unmatched = plan.problems, list(plan.unmatched)
+        stats = {**plan.stats, "by_project": plan.by_project}
+        for line, records in plan.records:
+            try:
+                add(line, records)
+            except (ValueError, TypeError, KeyError) as error:
+                errors.append({"line": line, "message": str(error)})
     for line, raw in rows:
         try:
-            records, row_warnings = map_row(kind, dict(raw), state)
-            for table, data in records:
-                # Дополнительные колонки источника не являются полями реестра.
-                fields = {c.name for c in TABLES[table].columns} - META_FIELDS
-                data = {k: v for k, v in data.items() if k in fields}
-                key = row_key(table, data)
-                identity = (table, key)
-                if identity in pending and pending[identity] != data and table != "assignment":
-                    raise ValueError(f"Конфликт повторяющихся строк: {table}, {key}")
-                pending[identity] = data
-                state[table][key] = {**data, "row_key": key}
-            warnings.extend({"line": line, "message": message} for message in row_warnings)
+            # Строка записывается сразу: следующая строка того же ключа видит её (слияние).
+            add(line, *map_row(kind, dict(raw), state))
         except Unmatched as error:
             unmatched.append({"line": line, "row": raw, "message": str(error)})
         except (ValueError, TypeError, KeyError) as error:
@@ -129,7 +173,15 @@ def _prepare(registry, path, author, connection):
         tuple(unmatched),
         tuple(errors),
         tuple(warnings),
+        tuple(problems),
+        stats,
+        options,
+        tuple((line, raw) for line, raw in meta["rows"]) if meta else (),
     )
+
+
+def _raw_json(raw):
+    return json_text({k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in raw.items()})
 
 
 def _audit(connection, author, time, table, key, before, after, basis):
@@ -175,7 +227,7 @@ def apply_preview(registry, preview):
     with registry.transaction() as connection:
         if registry.revision(connection) != preview.revision:
             raise ValueError("Предпросмотр устарел: повторите его перед применением")
-        current = _prepare(registry, preview.path, preview.author, connection)
+        current = _prepare(registry, preview.path, preview.author, connection, preview.options)
         if (
             current.file_hash != preview.file_hash
             or current.state_hash != preview.state_hash
@@ -226,6 +278,12 @@ def apply_preview(registry, preview):
             history.append({"table": table, "key": key, "before": before, "after": after})
             _write_version(connection, table, key, after, time, identifier)
             _audit(connection, preview.author, time, table, key, before, after, preview.path.name)
+        for line, raw in current.raw_rows:
+            connection.execute(
+                insert(milestone_raw_row).values(
+                    upload_id=identifier, row_no=line, raw_json=_raw_json(raw)
+                )
+            )
         connection.execute(
             insert(upload).values(
                 id=identifier,
@@ -276,9 +334,13 @@ def _check_references(state):
                 )
     for table in ("stage", "assignment", "milestone", "stage5_expense", "rp_project_set"):
         for row in state[table].values():
-            if not exists("project", project_code=row["project_code"], queue=row["queue"]):
+            # Веха проекта без очереди (queue = "") ссылается на проект целиком.
+            fields = {"project_code": row["project_code"]}
+            if table != "milestone" or row["queue"]:
+                fields["queue"] = row["queue"]
+            if not exists("project", **fields):
                 raise ValueError("Откат оставит строки без проекта")
-    for table in ("assignment", "milestone", "stage5_expense"):
+    for table in ("assignment", "stage5_expense"):
         for row in state[table].values():
             if not exists(
                 "stage", project_code=row["project_code"], queue=row["queue"], stage=row["stage"]
@@ -292,7 +354,7 @@ def _check_references(state):
         for row in state[table].values():
             if not exists("assignment", id=row["assignment_id"]):
                 raise ValueError("Откат оставит строки без назначения")
-    for table in ("individual_date", "redistribution", "milestone_plan_version"):
+    for table in ("individual_date", "redistribution", "milestone_plan_version", "milestone_key"):
         for row in state[table].values():
             if not exists("milestone", milestone_code=row["milestone_code"]):
                 raise ValueError("Откат оставит строки без вехи")
@@ -342,6 +404,9 @@ def rollback_upload(registry, upload_id, author="Группа СОВ"):
                 before,
                 f"Откат {source['file_name']}",
             )
+        connection.execute(
+            delete(milestone_raw_row).where(milestone_raw_row.c.upload_id == upload_id)
+        )
         connection.execute(
             update(upload).where(upload.c.id == upload_id).values(rolled_back_at=time)
         )

@@ -381,6 +381,58 @@ class PanelService:
             self.registry.bump_revision(connection)
             return identifier
 
+    MILESTONE_DECISIONS = {
+        # MILESTONES §8 и справочники соответствий RASST §4.2.
+        "milestone_inactive": ("milestone_code",),
+        "milestone_rename": ("milestone_code", "new_name"),
+        "plan_move_basis": ("milestone_code", "version", "basis"),
+        "fact_change_accept": ("milestone_code", "fact"),
+        "project_alias": ("from", "to"),
+        "queue_alias": ("project_code", "code_raw", "queue"),
+    }
+
+    def save_milestone_decision(self, kind, payload, basis, file_ref):
+        """Решение по вехам или справочнику соответствий; действует на следующие загрузки."""
+        require_admin(self.actor)
+        if kind not in self.MILESTONE_DECISIONS:
+            raise ValueError("Неизвестный вид решения по вехам")
+        missing = [k for k in self.MILESTONE_DECISIONS[kind] if k not in payload]
+        if missing:
+            raise ValueError(f"Не заполнено: {', '.join(missing)}")
+        if not basis.strip() or not file_ref.strip():
+            raise ValueError("Укажите основание и ссылку на подтверждающий файл")
+        codes = {r["milestone_code"] for r in self.registry.rows("milestone")}
+        if "milestone_code" in payload and payload["milestone_code"] not in codes:
+            raise ValueError("Веха не найдена в хранилище")
+        if kind == "fact_change_accept" and payload["fact"] is not None:
+            from datetime import date
+
+            date.fromisoformat(payload["fact"])
+        if kind == "project_alias" and payload["to"] not in {
+            r["project_code"] for r in self.registry.rows("project")
+        }:
+            raise ValueError("Проект реестра не найден")
+        with self.registry.transaction() as connection:
+            identifier = str(uuid4())
+            _domain_insert(
+                connection,
+                "manual_decision",
+                {
+                    "id": identifier,
+                    "kind": kind,
+                    "tab_no": None,
+                    "payload_json": json_text(dict(payload)),
+                    "basis": basis.strip(),
+                    "file_ref": file_ref.strip(),
+                    "author": self.actor.name,
+                },
+                timestamp(),
+                self.actor,
+                basis,
+            )
+            self.registry.bump_revision(connection)
+            return identifier
+
     def _case_with_decisions(self, adapter, identifier):
         case = adapter.build_case(identifier)
         target = adapter.one("assignment", id=identifier)

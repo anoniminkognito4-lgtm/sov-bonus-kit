@@ -17,8 +17,12 @@ SCHEMAS = {
     ),
     "milestone": (
         "milestone_code project_code queue stage:i name is_key:i status fact_date closed_1c_date "
+        "queue_raw name_raw template kind criterion extra_json first_file_hash "
     ),
-    "milestone_plan_version": "milestone_code version:i plan_date basis",
+    # effective_date — дата выгрузки 1С, с которой действует версия плана (MILESTONES §4, §5).
+    "milestone_plan_version": "milestone_code version:i plan_date basis effective_date file_hash",
+    # Натуральный ключ вехи без кода 1С: [проект, очередь 1С, этап, наименование] → код.
+    "milestone_key": "natural_key milestone_code",
     "assignment": (
         "id tab_no project_code queue stage:i sov_type category role position date_from "
         "date_to end_reason from_prev_stage:i "
@@ -106,6 +110,15 @@ snapshot = Table(
     Column("closed_by", String, nullable=False),
     Column("edition", String, nullable=False),
     Column("data_json", String, nullable=False),
+)
+# Строки выгрузки вех как есть (MILESTONES §4): не предметные данные, в снимок не входят.
+milestone_raw_row = Table(
+    "milestone_raw_row",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("upload_id", String, nullable=False),
+    Column("row_no", Integer, nullable=False),
+    Column("raw_json", String, nullable=False),
 )
 registry_state = Table(
     "registry_state",
