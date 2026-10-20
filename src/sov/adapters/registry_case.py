@@ -43,6 +43,15 @@ class RegistryAdapter:
         # СОВ, слайд 23: текущий NPV с прогнозными ПАУР.
         return rows[0]["npv_forecast_paur"]
 
+    def status_aliases(self):
+        """Решения status_alias: значение статуса 1С → assigned / done / inactive."""
+        result = {}
+        rows = [r for r in self.state["manual_decision"] if r["kind"] == "status_alias"]
+        for row in sorted(rows, key=lambda r: r["created_at"]):
+            payload = json.loads(row["payload_json"])
+            result[payload["raw"]] = payload["status"]
+        return result
+
     def bs_share(self, code, period):
         rows = self.rows("bs_share", project_code=code, quarter=period)
         return rows[0]["share_transferred"] if rows else None
@@ -92,11 +101,15 @@ class RegistryAdapter:
             v in (assignment["position"] or "").lower()
             for v in ("вице-президент", "директор", "начальник отдела")
         )
+        aliases = self.status_aliases()
         for source in source_ms:
-            if source["status"] and source["status"] not in self.params.milestone_statuses:
-                # Неизвестный статус 1С (например, отмена): веха не учитывается до решения.
-                excluded_ms.append({"name": source["name"], "status": source["status"]})
-                continue
+            status = source["status"]
+            unknown = bool(status) and status not in self.params.milestone_statuses
+            if unknown and aliases.get(status) == "inactive":
+                continue  # решение «снята»: вехи нет, веса пересчитываются
+            if unknown and aliases.get(status) not in ("assigned", "done"):
+                # Неизвестный статус 1С: веха остаётся в весах, но не платится до решения.
+                excluded_ms.append({"name": source["name"], "status": status})
             plans = self.rows("milestone_plan_version", milestone_code=source["milestone_code"])
             chosen = min if excluded else max
             plan = chosen(plans, key=lambda r: r["version"])["plan_date"] if plans else None
@@ -109,6 +122,8 @@ class RegistryAdapter:
                 "fact": source["fact_date"],
                 "closed_1c": source["closed_1c_date"],
             }
+            if any(item["name"] == source["name"] for item in excluded_ms):
+                milestone["status_unknown"] = True
             if source["is_key"]:
                 if final is not None:
                     raise ValueError("У этапа несколько ключевых вех")
@@ -278,7 +293,7 @@ class RegistryAdapter:
                 for m in milestones
             },
             "milestones": milestones,
-            "excluded_milestones": excluded_ms,
+            "unknown_status_milestones": excluded_ms,
             "final": final,
             "employees": [person],
             "key_rate_history": [

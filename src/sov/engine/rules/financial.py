@@ -1,4 +1,4 @@
-"""Финансовые коэффициенты: CALC_RULES §4–6."""
+"""Финансовые коэффициенты: CALC_RULES §4–6; вариант правила низкого NPV — RULE_CHANGES §1."""
 
 from sov.engine.params import DEFAULT_PARAMS, SovParams
 
@@ -12,7 +12,13 @@ def is_kupk(category: str) -> bool:
 def k_fin(
     category: str, npv_start: float, npv_current: float, params: SovParams = DEFAULT_PARAMS
 ) -> float:
-    if npv_start < params.low_npv_threshold:
+    threshold = params.low_npv_threshold
+    low = {
+        "start_lt": npv_start < threshold,
+        "abs_current_lt": abs(npv_current) < threshold,
+        "any_le": not (npv_start > threshold and npv_current > threshold),
+    }[params.low_npv_trigger]
+    if low:
         delta = npv_current - npv_start
         value = (
             1 + params.low_npv_slope * delta / params.low_npv_step

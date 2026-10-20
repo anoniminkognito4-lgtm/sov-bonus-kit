@@ -1,5 +1,5 @@
 {
- "doc": "К финансового результата: k_fin(category, npv_start, npv_current). ТЗ 6.5, CALC_RULES §5",
+ "doc": "К финансового результата: k_fin(category, npv_start, npv_current). ТЗ 6.5, CALC_RULES §5. С 3 кв. 2026 правило низкого NPV — если стартовый или текущий NPV ≤ 500 млн (any_le, RULE_CHANGES §1)",
  "cases": [
   {
    "category": "КУПК",
@@ -98,6 +98,34 @@
    "npv_current": 1200000000.0,
    "expected": 1.5,
    "why": "низкий NPV: 1,55 -> верхний предел РП/ЗРП"
+  },
+  {
+   "category": "КУПК",
+   "npv_start": 600000000.0,
+   "npv_current": 300000000.0,
+   "expected": 0.85,
+   "why": "RULE_CHANGES §1: текущий ≤ 500 млн → правило низкого NPV (в E0 было 0,75)"
+  },
+  {
+   "category": "КУПК (РП/ЗРП)",
+   "npv_start": 800000000.0,
+   "npv_current": 480000000.0,
+   "expected": 0.84,
+   "why": "RULE_CHANGES §1: текущий ≤ 500 млн (в E0 было 0,60)"
+  },
+  {
+   "category": "КУПК",
+   "npv_start": 500000000.0,
+   "npv_current": 700000000.0,
+   "expected": 1.1,
+   "why": "RULE_CHANGES §1: стартовый = 500 млн, ≤ порога (в E0 было 1,25)"
+  },
+  {
+   "category": "КУПК (РП/ЗРП)",
+   "npv_start": 450000000.0,
+   "npv_current": 900000000.0,
+   "expected": 1.225,
+   "why": "RULE_CHANGES §1: стартовый < 500 млн, как в E0"
   }
  ]
 }

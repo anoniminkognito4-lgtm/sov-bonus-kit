@@ -348,6 +348,39 @@ class PanelService:
             self.registry.bump_revision(connection)
             return identifier
 
+    STATUS_MEANINGS = {"assigned": "Назначена", "done": "Выполнена", "inactive": "снята"}
+
+    def save_status_alias(self, raw, status, basis, file_ref):
+        """Решение status_alias (MILESTONES §8): что значит статус вехи из 1С."""
+        require_admin(self.actor)
+        raw = (raw or "").strip()
+        if not raw:
+            raise ValueError("Укажите значение статуса из 1С")
+        if status not in self.STATUS_MEANINGS:
+            raise ValueError("Смысл статуса: assigned, done или inactive")
+        if not basis.strip() or not file_ref.strip():
+            raise ValueError("Укажите основание и ссылку на подтверждающий файл")
+        with self.registry.transaction() as connection:
+            identifier = str(uuid4())
+            _domain_insert(
+                connection,
+                "manual_decision",
+                {
+                    "id": identifier,
+                    "kind": "status_alias",
+                    "tab_no": None,
+                    "payload_json": json_text({"raw": raw, "status": status}),
+                    "basis": basis.strip(),
+                    "file_ref": file_ref.strip(),
+                    "author": self.actor.name,
+                },
+                timestamp(),
+                self.actor,
+                basis,
+            )
+            self.registry.bump_revision(connection)
+            return identifier
+
     def _case_with_decisions(self, adapter, identifier):
         case = adapter.build_case(identifier)
         target = adapter.one("assignment", id=identifier)

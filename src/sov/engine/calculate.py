@@ -45,7 +45,7 @@ MESSAGES = {
     "DISMISSED_ASSIGNMENT_OPEN": "Сотрудник уволен, назначение не закрыто.",
     "MANUAL_CALC": "Случай требует ручного расчёта.",
     "MILESTONE_AFTER_FINAL_PLAN": "План промежуточной вехи позже ключевой.",
-    "MILESTONE_STATUS_UNKNOWN": "Неизвестный статус вехи в 1С: веха не учитывается до решения.",
+    "MILESTONE_STATUS_UNKNOWN": "Неизвестный статус вехи в 1С: по вехе не платим до решения.",
     "MILESTONE_PART_PLAN": "План второй части вехи приравнен к ключевой вехе этапа (РнВ).",
     "LOAD_POSITION_UNKNOWN": "Нет загрузки по должности в таблице СОВ.",
     "LOAD_BEFORE_TABLE": "Период до начала действия таблицы загрузки: взят файл назначений.",
@@ -100,7 +100,7 @@ def _calculate_employee(case, employee, params, problems):
     tab_no, category = employee.get("tab_no"), employee.get("category")
     for issue in employee.get("load_issues") or ():
         _problem(problems, issue["code"], tab_no, issue["blocking"])
-    for excluded in case.get("excluded_milestones") or ():
+    for excluded in case.get("unknown_status_milestones") or ():
         _problem(problems, "MILESTONE_STATUS_UNKNOWN", tab_no, milestone=excluded["name"])
     if case.get("is_exception") or employee.get("legacy_sov"):
         _problem(problems, "MANUAL_CALC", tab_no)
@@ -263,8 +263,16 @@ def _calculate_employee(case, employee, params, problems):
                 item["redistribution_pct"] = pct
                 item["amount"] *= 1 + pct
         freeze_advance(employee, item)
+    for item, milestone in zip(result["milestones"], milestones, strict=True):
+        # Неизвестный статус 1С: веха в весах, сумма видна, но не платится (D-051).
+        if milestone.get("status_unknown") and item["calc_status"] != "не участвует":
+            item["calc_status"] = "требует решения"
     release_dates(case, employee, result["milestones"])
     _calculate_final(case, employee, result, final_plan, params, problems)
+    if final_input.get("status_unknown"):
+        result["final"]["calc_status"] = "требует решения"
+        for part in result["payouts"]:
+            part["calc_status"] = "требует решения"
     restrict_probation(case, employee, result)
     if handover_active(case):
         for item in result["milestones"]:

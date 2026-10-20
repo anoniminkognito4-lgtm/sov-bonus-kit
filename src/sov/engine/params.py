@@ -227,6 +227,10 @@ class SovParams:
     low_npv_delta: float = 50_000_000
     low_npv_step: float = 100_000_000
     low_npv_slope: float = 0.05
+    # Когда включается правило низкого NPV (RULE_CHANGES §1, D-075):
+    # start_lt — стартовый < порога (E0, CALC_RULES P2); abs_current_lt — |текущий| < порога
+    # (старый шаблон); any_le — стартовый или текущий ≤ порога (калькуляторы с 20.10.2026).
+    low_npv_trigger: str = "any_le"
     bs_base: float = 0.9
     bs_variable: float = 0.1
     bs_threshold: float = 0.4
@@ -283,6 +287,16 @@ class SovParams:
 
 
 DEFAULT_PARAMS = SovParams()
+# Базовая редакция E0 — CALC_RULES как есть (до 3 кв. 2026): правило низкого NPV по стартовому.
+E0_PARAMS = replace(DEFAULT_PARAMS, edition="E0", low_npv_trigger="start_lt")
+LOW_NPV_TRIGGERS = ("start_lt", "abs_current_lt", "any_le")
+# Встроенные редакции: (квартал начала, параметры). Загруженные редакции наследуют
+# встроенную, действующую на их квартал начала.
+BUILTIN_EDITIONS = (("0000-Q1", E0_PARAMS), ("2026-Q3", DEFAULT_PARAMS))
+
+
+def builtin_params(period):
+    return max((item for item in BUILTIN_EDITIONS if item[0] <= period), key=lambda i: i[0])[1]
 
 
 def _tuples(value):
@@ -365,7 +379,7 @@ def params_for_quarter(rows, period):
         if begin <= period:
             applicable.append((begin, edition, raw))
     if not applicable:
-        return DEFAULT_PARAMS
+        return builtin_params(period)
     begin, edition, raw = max(applicable)
     if sum(item[0] == begin for item in applicable) != 1:
         raise ValueError("Несколько редакций начинают действовать в одном квартале")
@@ -385,7 +399,7 @@ def params_for_quarter(rows, period):
         if field_types[name] is int and (not isinstance(parsed, int) or isinstance(parsed, bool)):
             raise ValueError(f"Параметр {name} должен быть целым")
         changes[name] = parsed
-    result = replace(DEFAULT_PARAMS, edition=edition, **changes)
+    result = replace(builtin_params(begin), edition=edition, **changes)
     if any(
         getattr(result, name) <= 0
         for name in (
@@ -412,6 +426,8 @@ def params_for_quarter(rows, period):
         for low, high in (result.financial_bounds, result.rp_financial_bounds, *result.rank_ranges)
     ):
         raise ValueError("Нижняя граница параметра выше верхней")
+    if result.low_npv_trigger not in LOW_NPV_TRIGGERS:
+        raise ValueError("low_npv_trigger: start_lt, abs_current_lt или any_le")
     if result.load_normalization not in ("буквально", "только деление на очереди"):
         raise ValueError("load_normalization: «буквально» или «только деление на очереди»")
     if any(v <= 0 for v in result.rank_thresholds):

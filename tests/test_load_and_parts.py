@@ -289,21 +289,47 @@ def panel(tmp_path):
     registry.dispose()
 
 
-def test_unknown_milestone_status_excluded_and_blocking(panel):
+def cancel_milestone(panel, code="TP-T01-M06", status="Отменена"):
     table = TABLES["milestone"]
     with panel.registry.transaction() as connection:
         connection.execute(
-            update(table).where(table.c.milestone_code == "TP-T01-M06").values(status="Отменена")
+            update(table).where(table.c.milestone_code == code).values(status=status)
         )
-    assignment_id = next(
-        a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001"
-    )
+    return next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+
+
+def test_unknown_status_kept_in_weights_but_not_paid(panel):
+    assignment_id = cancel_milestone(panel)
     calculation = panel.calculate("2026-Q3", [assignment_id])
     employee = calculation.results[assignment_id]["result"]["employees"][0]
-    assert len(employee["milestones"]) == 5
-    assert [m["weight"] for m in employee["milestones"]] == [pytest.approx(0.2)] * 5
+    # Веса остальных вех до решения не пересчитываются: 6 вех по 1/6.
+    assert [m["weight"] for m in employee["milestones"]] == [pytest.approx(1 / 6)] * 6
+    unknown = employee["milestones"][5]
+    assert unknown["calc_status"] == "требует решения" and unknown["amount"] > 0
+    paid = sum(m["amount"] for m in employee["milestones"] if m["calc_status"] == "рассчитано")
+    assert paid < employee["total_payable"] + 1e-6
     codes = {(p["code"], p["blocking"]) for p in calculation.problems}
     assert ("MILESTONE_STATUS_UNKNOWN", True) in codes
+
+
+def test_status_alias_inactive_removes_and_reweights(panel):
+    assignment_id = cancel_milestone(panel)
+    panel.save_status_alias("Отменена", "inactive", "Условное письмо 1С", "условно.pdf")
+    calculation = panel.calculate("2026-Q3", [assignment_id])
+    employee = calculation.results[assignment_id]["result"]["employees"][0]
+    assert [m["weight"] for m in employee["milestones"]] == [pytest.approx(0.2)] * 5
+    assert "MILESTONE_STATUS_UNKNOWN" not in {p["code"] for p in calculation.problems}
+
+
+def test_status_alias_working_status_counts_normally(panel):
+    assignment_id = cancel_milestone(panel, status="Закрыта")
+    panel.save_status_alias("Закрыта", "done", "Условное письмо 1С", "условно.pdf")
+    employee = panel.calculate("2026-Q3", [assignment_id]).results[assignment_id]["result"][
+        "employees"
+    ][0]
+    assert employee["milestones"][5]["calc_status"] == "рассчитано"
+    with pytest.raises(ValueError):
+        panel.save_status_alias("Закрыта", "другое", "основание", "файл")
 
 
 def test_default_params_unchanged_for_goldens():
