@@ -37,21 +37,46 @@ def assignment(identifier, project, queue, stage, date_from, date_to=None, posit
 
 def test_department_and_position_tables_by_date():
     assert department_block("ОРП 2 ДРП БРП") == "ДРП"
-    assert department_block("Отдел управления строительством БС") == "ДУС"
+    assert department_block("Отдел управления строительством БС") == "БС"
+    assert department_block("ДУП БПСК") == "БПСК"
     assert department_block("Условное подразделение") is None
     rppp = "Руководитель проекта по продукту"
-    assert position_load("ДРП", rppp, 4, False, "2026-06-30") == 0.1665  # до v2
-    assert position_load("ДРП", rppp, 4, False, "2026-07-01") == 0.14  # v2
-    assert position_load("ДРП", rppp, 1, True, "2026-06-30") is None  # дострой до v2 не задан
-    gip = "Главный инженер проекта"
-    assert position_load("ДУП", gip, 5, False, "2026-09-30") == 0.5
-    assert position_load("ДУП", gip, 5, False, "2026-10-01") == 0.2  # v3
+    assert position_load("ДРП", rppp, 4, False, "2025-07-01") == 0.1665
     assert (
-        position_load("ДУП", "Руководитель проекта проектирования", 5, False, "2026-10-01") == 0.05
+        position_load("ДРП", "Руководитель группы разработки продукта", 4, False, "2026-01-01")
+        == 0.1665
     )
+    assert position_load("ДРП", rppp, 4, True, "2026-01-01") == 0.08325  # дострой
+    assert position_load("ДРП", rppp, 4, False, "2025-06-30") is None  # до 01.07.2025 таблицы нет
+    gip = "Главный инженер проекта"
+    assert position_load("БПСК", gip, 5, False, "2026-10-01") == 0.5
+    assert position_load("БПСК", "Главный архитектор проекта", 5, False, "2026-01-01") == 0.15
     junior = "Младший менеджер по разработке продукта"
     assert position_load("ДРП", junior, 2, False, "2026-08-01") is None
-    assert position_load("ДУС", "Младший менеджер по строительству", 3, False, "2026-08-01") == 1
+    assert (
+        position_load("БС", "Старший менеджер по строительству (фасады)", 2, False, "2026-08-01")
+        == 0.25
+    )
+    assert position_load("БС", "Младший менеджер по строительству", 3, False, "2026-08-01") is None
+
+
+def test_completion_rule_against_macrobook_file():
+    # Дострой = этап 5 × 0,5; СКБ/ЛЦ = этап 2 × 0,5. Расхождения файла — D-061.
+    mismatches = set()
+    for _, block, names, stages, completion, special in DEFAULT_PARAMS.position_loads:
+        if completion is not None and completion != pytest.approx(stages[4] * 0.5):
+            mismatches.add((block, names[0], "дострой"))
+        if special is not None and special != pytest.approx(stages[1] * 0.5):
+            mismatches.add((block, names[0], "СКБ/ЛЦ"))
+    assert mismatches == {
+        ("БПСК", "Руководитель проекта проектирования", "дострой"),
+        ("БПП", "Руководитель проекта", "дострой"),
+        ("БПП", "Руководитель проекта", "СКБ/ЛЦ"),
+        ("БПП", "Заместитель руководителя проекта", "дострой"),
+        ("БПП", "Заместитель руководителя проекта", "СКБ/ЛЦ"),
+        ("БПП", "Менеджер проекта", "СКБ/ЛЦ"),
+    }
+    assert sum(row[1] == "БС" for row in DEFAULT_PARAMS.position_loads) == 21
 
 
 def test_queues_split_and_normalised_to_100_percent():
@@ -60,7 +85,7 @@ def test_queues_split_and_normalised_to_100_percent():
         assignment("a1", "P", "1", 3, "2026-01-01", position="Главный инженер проекта"),
         assignment("a2", "P", "2", 4, "2026-01-01", position="Главный инженер проекта"),
     ]
-    loads, issues = table_loads(rows, "ДУП", lambda a: False)
+    loads, issues = table_loads(rows, "БПСК", lambda a: False)
     assert loads["a1"][0]["load"] == pytest.approx(0.5 / 0.875)
     assert loads["a2"][0]["load"] == pytest.approx(0.375 / 0.875)
     assert not issues["a1"] and not issues["a2"]
@@ -74,7 +99,7 @@ def test_second_project_above_100_percent_keeps_actual_shares():
         assignment("a2", "A", "2", 4, "2026-01-01", position=gip),
         assignment("b", "B", "1", 5, "2026-03-01", position=gip),
     ]
-    loads, _ = table_loads(rows, "ДУП", lambda a: False)
+    loads, _ = table_loads(rows, "БПСК", lambda a: False)
     before, after = loads["a1"][0], loads["a1"][1]
     assert before["date_to"] == "2026-02-28" and before["load"] == pytest.approx(0.5 / 0.875)
     assert after["load"] == pytest.approx(0.5)
@@ -86,29 +111,40 @@ QUEUES_ONLY = replace(DEFAULT_PARAMS, load_normalization="только деле�
 
 
 def test_single_project_below_100_percent_by_mode():
-    # И-9: «буквально» (по умолчанию, как макрокнига) поднимает 25% до 100%.
-    rows = [assignment("a", "P", "1", 4, "2026-07-01", position="Менеджер по разработке продукта")]
+    # И-9: «буквально» (по умолчанию, как макрокнига) поднимает 33,3% до 100%.
+    rows = [assignment("a", "P", "1", 4, "2025-07-01", position="Менеджер по разработке продукта")]
     loads, _ = table_loads(rows, "ДРП", lambda a: False)
-    assert loads["a"] == [{"date_from": "2026-07-01", "date_to": None, "load": 1.0}]
+    assert loads["a"] == [{"date_from": "2025-07-01", "date_to": None, "load": 1.0}]
     loads, _ = table_loads(rows, "ДРП", lambda a: False, QUEUES_ONLY)
-    assert loads["a"] == [{"date_from": "2026-07-01", "date_to": None, "load": 0.25}]
+    assert loads["a"] == [{"date_from": "2025-07-01", "date_to": None, "load": 0.333}]
+
+
+GIP, MRP, RPP = (
+    "Главный инженер проекта",
+    "Менеджер по разработке продукта",
+    ("Руководитель проекта проектирования"),
+)
 
 
 @pytest.mark.parametrize(
     "rows, block, literal, queues_only",
     [
-        # К1: ДУП, ГИП, один проект на 5 этапе (v3: 20%).
-        ([("A", "1", 5)], "ДУП", 2_400_000, 480_000),
-        # К3: проект А на 5 этапе + проект Б на 2 этапе: сумма 120% — режимы совпадают.
-        ([("A", "1", 5), ("B", "1", 2)], "ДУП", 2_880_000, 2_880_000),
-        # К4: две очереди проекта А на 4 этапе: 37,5% + 37,5% → 50% + 50% в обоих режимах.
-        ([("A", "1", 4), ("A", "2", 4)], "ДУП", 2_400_000, 2_400_000),
+        # К1: БПСК, ГИП, один проект на 5 этапе (50%).
+        ([("A", "1", 5, GIP)], "БПСК", 2_400_000, 1_200_000),
+        # К2: ДРП, МРП, один проект на 4 этапе (33,3%).
+        ([("A", "1", 4, MRP)], "ДРП", 2_400_000, 799_200),
+        # К3: ГИП, проект А на 5 этапе + проект Б на 2 этапе: 150% — режимы совпадают.
+        ([("A", "1", 5, GIP), ("B", "1", 2, GIP)], "БПСК", 3_600_000, 3_600_000),
+        # К4: ГИП, две очереди проекта А на 4 этапе: 37,5% + 37,5% → 50% + 50% в обоих.
+        ([("A", "1", 4, GIP), ("A", "2", 4, GIP)], "БПСК", 2_400_000, 2_400_000),
+        # К5: БПСК, РПП, один проект на 5 этапе (5%).
+        ([("A", "1", 5, RPP)], "БПСК", 2_400_000, 120_000),
     ],
 )
 def test_pb_difference_between_modes(rows, block, literal, queues_only):
     items = [
-        assignment(f"a{i}", p, q, st, "2026-10-01", "2027-09-30", "Главный инженер проекта")
-        for i, (p, q, st) in enumerate(rows)
+        assignment(f"a{i}", p, q, st, "2026-10-01", "2027-09-30", position)
+        for i, (p, q, st, position) in enumerate(rows)
     ]
     for params, expected in ((DEFAULT_PARAMS, literal), (QUEUES_ONLY, queues_only)):
         loads, _ = table_loads(items, block, lambda a: False, params)
@@ -125,13 +161,45 @@ def test_pb_difference_between_modes(rows, block, literal, queues_only):
         assert total == pytest.approx(expected)
 
 
-def test_edition_change_splits_period():
-    rows = [assignment("a", "P", "1", 4, "2026-01-01", position="Менеджер по разработке продукта")]
-    loads, _ = table_loads(rows, "ДРП", lambda a: False, QUEUES_ONLY)
-    assert [(r["date_from"], r["load"]) for r in loads["a"]] == [
-        ("2026-01-01", 0.333),
-        ("2026-07-01", 0.25),
+@pytest.mark.parametrize(
+    "projects",
+    [
+        [("A", "1")],
+        [("A", "1"), ("B", "1")],
+        [("A", "1"), ("B", "1"), ("C", "1")],
+        [("A", "1"), ("A", "2"), ("B", "1")],
+    ],
+)
+def test_mp_table_literal_equals_mp_rule(projects):
+    # МП: 50% на всех этапах по таблице + «буквально» = правило «1 проект 100%, 2+ по 50%».
+    items = [
+        assignment(f"a{i}", p, q, 3, "2026-01-01", position="Менеджер проекта")
+        for i, (p, q) in enumerate(projects)
     ]
+    table, _ = table_loads(items, "БПП", lambda a: False)
+    rule = mp_loads(items)
+    assert {k: [r["load"] for r in v] for k, v in table.items()} == pytest.approx(
+        {k: [r["load"] for r in v] for k, v in rule.items()}
+    )
+
+
+def test_mp_table_and_rule_differ_with_completion_stage():
+    # Дострой у МП — 25%: проект на 3 этапе + проект в достройе → 66,7%/33,3% против 50%/50%.
+    items = [
+        assignment("a", "A", "1", 3, "2026-01-01", position="Менеджер проекта"),
+        assignment("b", "B", "1", 5, "2026-01-01", position="Менеджер проекта"),
+    ]
+    table, _ = table_loads(items, "БПП", lambda a: a["id"] == "b")
+    assert [table["a"][0]["load"], table["b"][0]["load"]] == pytest.approx([2 / 3, 1 / 3])
+    rule = mp_loads(items)
+    assert [rule["a"][0]["load"], rule["b"][0]["load"]] == [0.5, 0.5]
+
+
+def test_no_table_before_2025_07_01():
+    rows = [assignment("a", "P", "1", 4, "2025-04-01", position="Менеджер по разработке продукта")]
+    loads, issues = table_loads(rows, "ДРП", lambda a: False, QUEUES_ONLY)
+    assert [(r["date_from"], r["load"]) for r in loads["a"]] == [("2025-07-01", 0.333)]
+    assert issues["a"] == {"LOAD_BEFORE_TABLE"}
 
 
 def test_unknown_position_reported():
@@ -259,8 +327,10 @@ def test_registry_uses_position_table_for_dup(panel):
     person = value["case"]["employees"][0]
     # 4 этап ГИП — 75%; один проект, режим «буквально» доводит до 100% (И-9).
     assert {p["load"] for p in person["periods"]} == {1.0}
-    assert person["load_source"].startswith("таблица загрузки СОВ (ДУП")
-    assert not person["load_issues"]
+    assert person["load_source"].startswith("таблица загрузки (БПСК")
+    # С 01.04.2025 по 30.06.2025 таблицы ещё нет — этот период взят из файла.
+    assert person["load_source"].endswith("+ файл назначений")
+    assert {i["code"] for i in person["load_issues"]} == {"LOAD_BEFORE_TABLE"}
 
 
 def test_registry_unknown_position_falls_back_to_file(panel):
@@ -274,3 +344,18 @@ def test_registry_unknown_position_falls_back_to_file(panel):
     assert ("LOAD_POSITION_UNKNOWN", False) in {
         (p["code"], p["blocking"]) for p in calculation.problems
     }
+
+
+def test_macrobook_csv_is_the_default_table_and_replaceable(capsys):
+    import csv
+    import io
+    import sys
+
+    sys.path.insert(0, str(ROOT / "tools"))
+    from load_table_param import main, read_table
+
+    source = ROOT / "config/load_table_macrobook.csv"
+    assert read_table(source, "2025-07-01") == DEFAULT_PARAMS.position_loads
+    main([str(source), "2025-07-01", "--edition", "SOV-test", "--effective-from", "2026-Q3"])
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out), delimiter=";"))
+    assert params_for_quarter(rows, "2026-Q3").position_loads == DEFAULT_PARAMS.position_loads

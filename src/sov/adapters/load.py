@@ -4,6 +4,7 @@
 в формате таблицы `assignment_load` и проблемы для движка.
 """
 
+import math
 import re
 from datetime import date, timedelta
 
@@ -11,7 +12,7 @@ from sov.engine.params import DEFAULT_PARAMS
 from sov.engine.rules.load import project_load, rp_load
 
 OPEN_END = "9999-12-31"
-GAPS = {"LOAD_POSITION_UNKNOWN", "RP_SET_MISSING_PROJECT"}
+GAPS = {"LOAD_POSITION_UNKNOWN", "LOAD_BEFORE_TABLE", "RP_SET_MISSING_PROJECT"}
 NORMALIZE_LITERAL = "буквально"
 NORMALIZE_QUEUES = "только деление на очереди"
 
@@ -40,7 +41,7 @@ def department_block(department, params=DEFAULT_PARAMS):
 
 
 def position_load(block, position, stage, completion, on_date, params=DEFAULT_PARAMS):
-    """% загрузки по таблице сл. 18, действующей на дату. None — должности или значения нет."""
+    """% загрузки по таблице должностей, действующей на дату. None — должности или значения нет."""
     name = _norm(position)
     chosen = None
     for begin, row_block, names, stages, completion_value, _ in params.position_loads:
@@ -101,7 +102,12 @@ def table_loads(assignments, block, completion_of, params=DEFAULT_PARAMS):
         for a in active:
             value = position_load(block, a["position"], a["stage"], completion_of(a), begin, params)
             if value is None:
-                issues[a["id"]].add("LOAD_POSITION_UNKNOWN")
+                later = position_load(
+                    block, a["position"], a["stage"], completion_of(a), OPEN_END, params
+                )
+                issues[a["id"]].add(
+                    "LOAD_BEFORE_TABLE" if later is not None else "LOAD_POSITION_UNKNOWN"
+                )
             values[a["id"]] = value
         queues = {}
         for a in active:
@@ -182,6 +188,43 @@ def rp_set_load(rows, role, params=DEFAULT_PARAMS):
     }
 
 
+def _span(row):
+    return row["date_from"], row["date_to"] or OPEN_END
+
+
+def _uncovered(file_rows, rows):
+    """Части строк файла, на которые правило загрузки не дало значения."""
+    result = []
+    for row in file_rows:
+        pieces = [_span(row)]
+        for begin, end in map(_span, rows):
+            next_pieces = []
+            for low, high in pieces:
+                if end < low or begin > high:
+                    next_pieces.append((low, high))
+                    continue
+                if low < begin:
+                    next_pieces.append((low, _prev_day(begin)))
+                if end < high:
+                    next_pieces.append((_next_day(end), high))
+            pieces = next_pieces
+        result.extend(
+            {"date_from": low, "date_to": None if high == OPEN_END else high, "load": row["load"]}
+            for low, high in pieces
+        )
+    return result
+
+
+def _differs(file_rows, rows):
+    """Есть ли день, где загрузка файла 1С отличается от загрузки по правилу."""
+    return any(
+        not math.isclose(f["load"], r["load"], abs_tol=1e-9)
+        for f in file_rows
+        for r in rows
+        if _span(f)[0] <= _span(r)[1] and _span(r)[0] <= _span(f)[1]
+    )
+
+
 class LoadPlanner:
     """Выбор источника загрузки назначения: правило СОВ или файл 1С."""
 
@@ -213,14 +256,19 @@ class LoadPlanner:
             return None, "файл назначений", []
         rows, source, codes = planned
         if codes & GAPS:
-            # Правило не даёт загрузку: берём файл 1С, если он есть, иначе блокируем.
+            if file_rows and rows:
+                # Правило покрывает не весь срок (например, до начала таблицы):
+                # пробелы заполняются загрузкой из файла 1С.
+                filled = sorted(rows + _uncovered(file_rows, rows), key=lambda r: r["date_from"])
+                issues = [(code, False) for code in sorted(codes)]
+                if _differs(file_rows, rows):
+                    issues.append(("LOAD_FILE_DIFFERS", False))
+                return filled, f"{source} + файл назначений", issues
             if file_rows:
                 return None, "файл назначений", [(code, False) for code in sorted(codes)]
             return rows or None, source, [(code, code in GAPS) for code in sorted(codes)]
         issues = [(code, False) for code in sorted(codes)]
-        if file_rows and {round(r["load"], 6) for r in file_rows} != {
-            round(r["load"], 6) for r in rows
-        }:
+        if file_rows and _differs(file_rows, rows):
             issues.append(("LOAD_FILE_DIFFERS", False))
         return rows, source, issues
 
@@ -237,7 +285,7 @@ class LoadPlanner:
         if table_driven:
             loads, issues = table_loads(table_driven, block, self._completion, self.params)
             for a in table_driven:
-                source = f"таблица загрузки СОВ ({block}, сл. 18)"
+                source = f"таблица загрузки ({block}, макрокнига с 01.07.2025)"
                 plan[a["id"]] = (loads[a["id"]], source, issues[a["id"]])
         mp = [a for a in assignments if a["category"] == "МП"]
         if mp:
