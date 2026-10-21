@@ -18,6 +18,12 @@ SCHEMAS = {
     # Калькулятор = этап очереди с зафиксированным набором вех (NEW_CALC §2).
     # active = 0 — веха убрана из набора решением calc_set_change.
     "calc_milestone": "project_code queue stage:i milestone_code order:i source added_by active:i",
+    # Справочник должностей: блок, полное название, категория, вид СОВ по умолчанию.
+    "position_ref": "block position category sov_type load_row comment",
+    # Исправления в названиях должностей из калькуляторов и 1С: опечатка → верно.
+    "position_fix": "wrong right",
+    # Признак очереди «ЛЦ или объект СКБ» с даты (загрузка БПСК — из столбца «ЛЦ, объекты СКБ»).
+    "project_flag": "project_code queue date_from is_lc_skb:i basis",
     "milestone": (
         "milestone_code project_code queue stage:i name is_key:i status fact_date closed_1c_date "
         "queue_raw name_raw template kind criterion extra_json first_file_hash "

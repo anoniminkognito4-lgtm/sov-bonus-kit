@@ -5,7 +5,8 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
-from sov.adapters.load import LoadPlanner
+from sov.adapters.load import LoadPlanner, department_block
+from sov.adapters.positions import PositionBook, resolve
 from sov.engine.calculate import calculate_case
 from sov.engine.params import DEFAULT_PARAMS
 from sov.engine.rules.kpi import milestone_kpis, quarter, quarter_add  # noqa: F401
@@ -24,6 +25,30 @@ class RegistryAdapter:
                 self.state = registry.domain_state(current)
                 self.closed = [json.loads(v) for v in current.scalars(select(snapshot.c.data_json))]
         self.loads = LoadPlanner(self)
+        self._book = None
+
+    def position_book(self):
+        if self._book is None:
+            projects = [p["name"] for p in self.state["project"]]
+            projects += [p["project_code"] for p in self.state["project"]]
+            self._book = PositionBook(
+                self.state.get("position_ref", []), self.state.get("position_fix", []), projects
+            )
+        return self._book
+
+    def resolve_assignment(self, assignment, employee, block=None):
+        """Назначение с должностью справочника, категорией и видом СОВ; коды проблем.
+
+        Распознавание нужно только блокам с таблицей загрузки (ДРП, БПСК, БС);
+        пустой справочник — прежнее поведение (D-098).
+        """
+        raw = employee["position"] or assignment["position"]
+        book = self.position_book()
+        if not (book and block):
+            return resolve(assignment, raw, None), set()
+        found = book.recognize(raw, block)
+        codes = set() if found["ref"] else {"POSITION_UNRECOGNIZED"}
+        return resolve(assignment, raw, found["ref"]), codes
 
     def rows(self, table, **fields):
         return [r for r in self.state[table] if all(r.get(k) == v for k, v in fields.items())]
@@ -93,6 +118,9 @@ class RegistryAdapter:
         project = self.one("project", project_code=code, queue=queue)
         stage = self.one("stage", project_code=code, queue=queue, stage=stage_number)
         employee = self.one("employee", tab_no=assignment["tab_no"])
+        resolved, _ = self.resolve_assignment(
+            assignment, employee, department_block(employee["department"], self.params)
+        )
         fixed = [
             r["milestone_code"]
             for r in sorted(
@@ -190,7 +218,7 @@ class RegistryAdapter:
             "tab_no": employee["tab_no"],
             "fio": employee["fio"],
             "position": assignment["position"],
-            "category": assignment["category"],
+            "category": resolved["category"],
             "role": assignment["role"],
             "start": assignment["date_from"],
             "periods": self.periods(assignment, employee, end, extend, load_rows),
@@ -211,7 +239,7 @@ class RegistryAdapter:
             "kpi_quarterly": kpi_rows,
             "probation_end": employee["probation_end"],
             "probation_result": employee["probation_result"],
-            "legacy_sov": assignment["sov_type"]
+            "legacy_sov": resolved["sov_type"]
             not in ("Вехи", "Вехи от NPV", "Вехи от KPI", "вр. KPI (Вехи)"),
         }
         frozen, frozen_payouts, frozen_interest = {}, {}, {}

@@ -274,23 +274,28 @@ def build_records(rows, store, project, queue, stage, header, team, author):
             )
         )
         if person["category"].startswith("КУПК"):
-            # Сл. 22: стартовый NPV этапа — по ФМ квартала завершения предыдущего этапа.
-            fixed = (date.fromisoformat(person["date_from"]) - timedelta(days=1)).isoformat()
-            source = npv.get((project, quarter(fixed)))
-            if source and source["npv_forecast_paur"] is not None:
-                records.append(
-                    (
-                        "start_npv",
-                        {
-                            "assignment_id": identity,
-                            "npv_start": source["npv_forecast_paur"],
-                            "fixed_date": fixed,
-                            "basis": f"старт этапа {stage}, ФМ {quarter(fixed)}",
-                            "corrections": None,
-                        },
-                    )
-                )
+            records.extend(start_npv_records(npv, identity, project, stage, person["date_from"]))
     return records, selection
+
+
+def start_npv_records(npv, identity, project, stage, date_from):
+    """Сл. 22: стартовый NPV этапа — по ФМ квартала накануне старта. npv — {(проект, квартал)}."""
+    fixed = (date.fromisoformat(date_from) - timedelta(days=1)).isoformat()
+    source = npv.get((project, quarter(fixed)))
+    if not source or source["npv_forecast_paur"] is None:
+        return []
+    return [
+        (
+            "start_npv",
+            {
+                "assignment_id": identity,
+                "npv_start": source["npv_forecast_paur"],
+                "fixed_date": fixed,
+                "basis": f"старт этапа {stage}, ФМ {quarter(fixed)}",
+                "corrections": None,
+            },
+        )
+    ]
 
 
 def set_changes(store):

@@ -15,6 +15,9 @@ KEYS = {
     "milestone_plan_version": ("milestone_code", "version"),
     "milestone_key": ("natural_key",),
     "calc_milestone": ("project_code", "queue", "stage", "milestone_code"),
+    "position_ref": ("block", "position"),
+    "position_fix": ("wrong",),
+    "project_flag": ("project_code", "queue", "date_from"),
     "assignment": ("id",),
     "assignment_load": ("assignment_id", "date_from"),
     "individual_date": ("tab_no", "milestone_code"),
@@ -68,6 +71,20 @@ def milestone_for(state, row):
 
 def map_row(kind, row, state):
     warnings = []
+    if kind == "position_ref":
+        return [
+            (
+                "position_ref",
+                {
+                    "block": row["Подразделение"],
+                    "position": row["Должность"],
+                    "category": row.get("Категория"),
+                    "sov_type": row.get("Вид СОВ по умолчанию"),
+                    "load_row": row.get("Загрузка (строка слайда 18 или правило)"),
+                    "comment": row.get("Источник и комментарий"),
+                },
+            )
+        ], warnings
     if kind in ("bgb_period", "assignment", "kpi", "rp_project_set"):
         require(state, "employee", tab_no=row["tab_no"])
     if kind in ("stage", "assignment", "stage5_expense", "rp_project_set"):
@@ -130,6 +147,13 @@ def map_row(kind, row, state):
                     else None
                 )
             )
+            if old["end_reason"] and not row.get("end_reason"):
+                # Ручное «Убрать с проекта» не отменяется файлом без даты ухода (D-100).
+                data["date_to"], data["end_reason"] = old["date_to"], old["end_reason"]
+                warnings.append(
+                    f"{row['tab_no']} {row['project_code']}/{row['queue']}/{row['stage']}: "
+                    f"в файле нет даты ухода, сохранено «{old['end_reason']}» {old['date_to']}"
+                )
         load = {
             "assignment_id": identity,
             "date_from": row["date_from"],

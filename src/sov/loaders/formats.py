@@ -34,6 +34,7 @@ FORMATS = {
         "tab_no rank project_code queue class area_k_m2 stage extra_objects is_queue "
         "is_logistics approved_date approved_by "
     ),
+    "position_fix": "wrong right",
     "case_map": "case_id tab_no project_code",
     "payroll_example": "Табельный номер ФИО Подразделение",
 }
@@ -52,6 +53,8 @@ MS_HEADERS = [
     "Критерий закрытия",
     "Фактический срок",
 ]
+# Справочник должностей (samples/positions.csv): заголовки по-русски.
+POSITION_HEADERS = ("Подразделение", "Должность", "Категория", "Вид СОВ по умолчанию")
 DATE_FIELDS = {
     "hire_date",
     "dismissal_date",
@@ -194,6 +197,8 @@ def read_source(path):
         raise ValueError("Пустые или повторяющиеся заголовки")
     if set(MS_HEADERS) <= set(headers):
         kind = "milestone"
+    elif set(POSITION_HEADERS) <= set(headers):
+        kind = "position_ref"
     else:
         candidates = [
             (name, columns.split())

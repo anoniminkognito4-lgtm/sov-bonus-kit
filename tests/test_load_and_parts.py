@@ -394,7 +394,9 @@ def test_registry_uses_position_table_for_dup(panel):
     assert {i["code"] for i in person["load_issues"]} == {"LOAD_BEFORE_TABLE"}
 
 
-def test_registry_unknown_position_falls_back_to_file(panel):
+def test_registry_position_without_load_is_incomplete(panel):
+    # Должность есть в справочнике, загрузки нет ни в одной таблице:
+    # решение пользователя — ASSIGNMENT_INCOMPLETE, пока загрузку не скажут (D-098).
     set_employee(
         panel, "T0001", department="ОРП 1 ДРП", position="Младший менеджер по разработке продукта"
     )
@@ -402,9 +404,9 @@ def test_registry_unknown_position_falls_back_to_file(panel):
     calculation = panel.calculate("2026-Q3", [identifier])
     person = calculation.results[identifier]["case"]["employees"][0]
     assert person["load_source"] == "файл назначений"
-    assert ("LOAD_POSITION_UNKNOWN", False) in {
-        (p["code"], p["blocking"]) for p in calculation.problems
-    }
+    codes = {(p["code"], p["blocking"]) for p in calculation.problems}
+    assert ("ASSIGNMENT_INCOMPLETE", True) in codes
+    assert "LOAD_POSITION_UNKNOWN" not in {c for c, _ in codes}
 
 
 def test_macrobook_csv_is_the_default_table_and_replaceable(capsys):

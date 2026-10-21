@@ -156,6 +156,9 @@
 | holiday | date | kind |
 | redistribution | tab_no, milestone_code | pct, decided_by, approved_date, basis |
 | rp_project_set | tab_no, project_code, queue | rank, class, area_k_m2, stage, extra_objects, is_queue, is_logistics, approved_date |
+| position_ref | block, position | category, sov_type, load_row, comment — справочник должностей (D-098); файл с заголовками «Подразделение; Должность; Категория; Вид СОВ по умолчанию; …» |
+| position_fix | wrong | right — исправления в названиях должностей (`wrong;right`) |
+| project_flag | project_code, queue, date_from | is_lc_skb, basis — «ЛЦ или объект СКБ» с даты (D-099) |
 | sov_param | edition, name | value, valid_from |
 | upload | id | file_name, file_hash, type, author, uploaded_at, applied_at, rolled_back_at |
 | accrual | id | snapshot_id, tab_no, assignment_id, kind, milestone_code, part, quarter, pay_date, amount, calc_status, edition |

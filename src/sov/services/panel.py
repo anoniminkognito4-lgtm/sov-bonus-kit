@@ -469,6 +469,91 @@ class PanelService:
             "new_calc",
         )
 
+    def _records(self, records, label, kind):
+        from sov.loaders.service import apply_records
+
+        return apply_records(self.registry, records, label, self.actor.name, kind)
+
+    def position_questions(self):
+        """Должности, не распознанные справочником: вопросы Группе СОВ (D-098)."""
+        from sov.services import team
+
+        return team.position_questions(self.registry.rows, DEFAULT_PARAMS)
+
+    def save_positions(self, edited, basis):
+        """Правка справочника должностей в панели: журнал и откат как у загрузки."""
+        require_admin(self.actor)
+        from sov.services import team
+
+        if not basis.strip():
+            raise ValueError("Укажите основание правки")
+        return self._records(
+            team.directory_records(edited), f"Справочник должностей: {basis}", "position_ref"
+        )
+
+    def save_position_fixes(self, edited, basis):
+        require_admin(self.actor)
+        from sov.services import team
+
+        if not basis.strip():
+            raise ValueError("Укажите основание правки")
+        return self._records(
+            team.fix_records(edited), f"Исправления должностей: {basis}", "position_fix"
+        )
+
+    def lc_skb(self, project, queue, on_date):
+        from sov.services import team
+
+        return team.lc_skb_state(self.registry.rows, project, queue, on_date)
+
+    def set_lc_skb(self, project, queue, flag, date_from, basis):
+        """Флажок «ЛЦ или объект СКБ» очереди с даты (D-099)."""
+        require_admin(self.actor)
+        from sov.services import team
+
+        record = team.lc_skb_record(project, queue, flag, date_from, basis)
+        action = "отмечена" if flag else "снята отметка"
+        return self._records(
+            [record],
+            f"ЛЦ/СКБ {project}/{queue}: {action} с {date_from}. {basis.strip()}",
+            "project_flag",
+        )
+
+    def team_defaults(self, department, position):
+        from sov.services import team
+
+        return team.defaults(self.registry.rows, DEFAULT_PARAMS, department, position)
+
+    def add_to_team(self, form):
+        """«Добавить в команду»: назначение с датой прихода, журнал и откат (D-100)."""
+        require_admin(self.actor)
+        from sov.services import team
+
+        records, identity = team.add_records(self.registry.rows, DEFAULT_PARAMS, form)
+        report = self._records(
+            records,
+            f"Добавлен в команду {form['tab_no']} → {form['project_code']}/{form['queue']}"
+            f"/{form['stage']} с {form['date_from']}. {form['basis'].strip()}",
+            "team_add",
+        )
+        return {**report, "assignment_id": identity}
+
+    def remove_from_team(self, identifier, date_to, end_reason, basis):
+        """«Убрать с проекта»: назначение закрывается датой и причиной, не удаляется."""
+        require_admin(self.actor)
+        from sov.services import team
+
+        if not basis.strip():
+            raise ValueError("Укажите основание")
+        record = team.remove_record(self.registry.rows, identifier, date_to, end_reason)
+        data = record[1]
+        return self._records(
+            [record],
+            f"Убран с проекта {data['tab_no']} ← {data['project_code']}/{data['queue']}"
+            f"/{data['stage']}: {end_reason} {date_to}. {basis.strip()}",
+            "team_remove",
+        )
+
     def save_calc_set_change(self, payload, basis, file_ref):
         """Решение calc_set_change: изменить зафиксированный набор вех калькулятора."""
         require_admin(self.actor)

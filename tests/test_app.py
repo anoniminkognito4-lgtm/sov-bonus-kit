@@ -48,6 +48,7 @@ def test_every_screen_opens_with_loaded_samples(app):
         "Обзор",
         "Сотрудники",
         "Проекты",
+        "Должности",
         "Проблемы",
         "Ручные решения",
         "Расчёт и закрытие",
@@ -273,3 +274,26 @@ def test_demo_mode_banner(monkeypatch, tmp_path):
     ui.run()
     assert not ui.exception
     assert any("Демо-режим" in w.value for w in ui.sidebar.warning)
+
+
+def test_team_forms_and_positions_screen(app):
+    ui, path = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    navigate(ui, "Должности")
+    assert any("распознаны" in s.value for s in ui.success)
+    navigate(ui, "Проекты")
+    ui.selectbox(key="team_tab_TP-T01_1").set_value("T0002").run()
+    ui.date_input(key="team_from_TP-T01_1").set_value(date(2026, 8, 1)).run()
+    ui.selectbox(key="team_cat_TP-T01_1").set_value("РУПК").run()
+    ui.selectbox(key="team_sov_TP-T01_1").set_value("Вехи").run()
+    ui.text_input(key="team_basis_TP-T01_1").set_value("Условный приказ").run()
+    ui.button(key="team_add_TP-T01_1").click().run()
+    assert not ui.exception
+    assert any("Добавлено" in s.value for s in ui.success), [e.value for e in ui.error]
+    added = [
+        a
+        for a in Registry(path).rows("assignment")
+        if a["tab_no"] == "T0002" and a["project_code"] == "TP-T01"
+    ]
+    assert added and added[0]["date_from"] == "2026-08-01"

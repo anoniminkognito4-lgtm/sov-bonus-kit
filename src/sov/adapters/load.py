@@ -12,7 +12,15 @@ from sov.engine.params import DEFAULT_PARAMS
 from sov.engine.rules.load import project_load, rp_load
 
 OPEN_END = "9999-12-31"
-GAPS = {"LOAD_POSITION_UNKNOWN", "LOAD_BEFORE_TABLE", "RP_SET_MISSING_PROJECT"}
+GAPS = {
+    "LOAD_POSITION_UNKNOWN",
+    "LOAD_BEFORE_TABLE",
+    "RP_SET_MISSING_PROJECT",
+    "POSITION_UNRECOGNIZED",
+    "ASSIGNMENT_INCOMPLETE",
+}
+# Блокируют расчёт даже при загрузке из файла 1С (D-098).
+ALWAYS_BLOCKING = {"ASSIGNMENT_INCOMPLETE"}
 NORMALIZE_LITERAL = "буквально"
 NORMALIZE_QUEUES = "только деление на очереди"
 
@@ -40,17 +48,23 @@ def department_block(department, params=DEFAULT_PARAMS):
     return None
 
 
-def position_load(block, position, stage, completion, on_date, params=DEFAULT_PARAMS):
-    """% загрузки по таблице должностей, действующей на дату. None — должности или значения нет."""
+def position_load(block, position, stage, completion, on_date, params=DEFAULT_PARAMS, lc_skb=False):
+    """% загрузки по таблице должностей, действующей на дату. None — должности или значения нет.
+
+    lc_skb — очередь отмечена «ЛЦ или объект СКБ»: БПСК берёт столбец «ЛЦ, объекты СКБ»;
+    если в строке таблицы этого столбца нет, действует обычное значение этапа (D-099).
+    """
     name = _norm(position)
     chosen = None
-    for begin, row_block, names, stages, completion_value, _ in params.position_loads:
+    for begin, row_block, names, stages, completion_value, special in params.position_loads:
         if row_block != block or begin > on_date or name not in {_norm(n) for n in names}:
             continue
         if chosen is None or begin >= chosen[0]:
-            chosen = (begin, stages, completion_value)
+            chosen = (begin, stages, completion_value, special)
     if chosen is None:
         return None
+    if lc_skb and block == "БПСК" and chosen[3] is not None:
+        return chosen[3]
     return chosen[2] if completion else chosen[1][stage - 1]
 
 
@@ -85,7 +99,26 @@ def _merge(rows):
     return merged
 
 
-def table_loads(assignments, block, completion_of, params=DEFAULT_PARAMS):
+def lc_skb_of(flags):
+    """По строкам project_flag → функция (назначение, дата) → признак ЛЦ/СКБ и даты смены."""
+    by_queue = {}
+    for row in sorted(flags, key=lambda r: (r["date_from"], r["created_at"] or "")):
+        by_queue.setdefault((row["project_code"], row["queue"]), []).append(row)
+
+    def lookup(assignment, on_date):
+        rows = by_queue.get((assignment["project_code"], assignment["queue"]), [])
+        state = False
+        for row in rows:
+            if row["date_from"] <= on_date:
+                state = bool(row["is_lc_skb"])
+        return state
+
+    return lookup, {row["date_from"] for row in flags}
+
+
+def table_loads(
+    assignments, block, completion_of, params=DEFAULT_PARAMS, lc_skb=None, flag_dates=()
+):
     """Загрузка по таблице должностей с делением на очереди и приведением к 100%.
 
     И-9 (открыто, параметр load_normalization):
@@ -98,10 +131,13 @@ def table_loads(assignments, block, completion_of, params=DEFAULT_PARAMS):
     result = {a["id"]: [] for a in assignments}
     issues = {a["id"]: set() for a in assignments}
     first_table = min(dates, default=None)
-    for begin, end, active in _segments(assignments, dates):
+    for begin, end, active in _segments(assignments, dates | set(flag_dates)):
         values = {}
         for a in active:
-            value = position_load(block, a["position"], a["stage"], completion_of(a), begin, params)
+            special = bool(lc_skb and lc_skb(a, begin))
+            value = position_load(
+                block, a["position"], a["stage"], completion_of(a), begin, params, special
+            )
             if value is None:
                 later = position_load(
                     block, a["position"], a["stage"], completion_of(a), OPEN_END, params
@@ -111,7 +147,7 @@ def table_loads(assignments, block, completion_of, params=DEFAULT_PARAMS):
                 )
             elif first_table and begin > first_table:
                 base = position_load(
-                    block, a["position"], a["stage"], completion_of(a), first_table, params
+                    block, a["position"], a["stage"], completion_of(a), first_table, params, special
                 )
                 if base is not None and abs(base - value) > 1e-12:
                     # Ожидаемое расхождение с Excel-калькуляторами (D-059).
@@ -268,12 +304,13 @@ class LoadPlanner:
                 # Правило покрывает не весь срок (например, до начала таблицы):
                 # пробелы заполняются загрузкой из файла 1С.
                 filled = sorted(rows + _uncovered(file_rows, rows), key=lambda r: r["date_from"])
-                issues = [(code, False) for code in sorted(codes)]
+                issues = [(code, code in ALWAYS_BLOCKING) for code in sorted(codes)]
                 if _differs(file_rows, rows):
                     issues.append(("LOAD_FILE_DIFFERS", False))
                 return filled, f"{source} + файл назначений", issues
             if file_rows:
-                return None, "файл назначений", [(code, False) for code in sorted(codes)]
+                issues = [(code, code in ALWAYS_BLOCKING) for code in sorted(codes)]
+                return None, "файл назначений", issues
             return rows or None, source, [(code, code in GAPS) for code in sorted(codes)]
         issues = [(code, False) for code in sorted(codes)]
         if file_rows and _differs(file_rows, rows):
@@ -281,20 +318,28 @@ class LoadPlanner:
         return rows, source, issues
 
     def _plan(self, employee):
-        assignments = [
-            {**a, "position": employee["position"] or a["position"]}
-            for a in self.adapter.rows("assignment", tab_no=employee["tab_no"])
-        ]
-        plan = {}
         block = department_block(employee["department"], self.params)
+        assignments, recognition = [], {}
+        for row in self.adapter.rows("assignment", tab_no=employee["tab_no"]):
+            resolved, codes = self.adapter.resolve_assignment(row, employee, block)
+            assignments.append(resolved)
+            recognition[row["id"]] = codes
+        plan = {}
         table_driven = [
             a for a in assignments if block and a["category"] not in ("КУПК (РП/ЗРП)", "МП")
         ]
         if table_driven:
-            loads, issues = table_loads(table_driven, block, self._completion, self.params)
+            lc_skb, flag_dates = lc_skb_of(self.adapter.rows("project_flag"))
+            loads, issues = table_loads(
+                table_driven, block, self._completion, self.params, lc_skb, flag_dates
+            )
             for a in table_driven:
                 source = f"таблица загрузки ({block}, макрокнига с 01.07.2025)"
-                plan[a["id"]] = (loads[a["id"]], source, issues[a["id"]])
+                codes = issues[a["id"]] | recognition[a["id"]]
+                if "POSITION_UNRECOGNIZED" not in codes and "LOAD_POSITION_UNKNOWN" in codes:
+                    # Должность из справочника, а строки в таблице нет (D-098).
+                    codes = (codes - {"LOAD_POSITION_UNKNOWN"}) | {"ASSIGNMENT_INCOMPLETE"}
+                plan[a["id"]] = (loads[a["id"]], source, codes)
         mp = [a for a in assignments if a["category"] == "МП"]
         if mp:
             for key, rows in mp_loads(mp, self.params).items():

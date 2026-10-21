@@ -27,6 +27,7 @@ from sov.ui.new_calc import open_new_calc, render_hints, render_new_calc
 from sov.ui.redistribution import render_redistribution
 from sov.ui.registry import render_calculator, render_registry
 from sov.ui.scenario import render_scenario
+from sov.ui.team import render_lc_skb, render_positions, render_team_forms
 
 ROOT = Path(__file__).resolve().parents[1]
 st.set_page_config(page_title="СОВ · Расчёт бонусов", page_icon="◈", layout="wide")
@@ -112,6 +113,7 @@ page = st.sidebar.radio(
         "Сотрудники",
         "Проекты",
         "Новый калькулятор",
+        "Должности",
         "Загрузка",
         "Проблемы",
         "Ручные решения",
@@ -323,6 +325,11 @@ TYPE_LABELS = {
     "holiday": "Календарь",
     "redistribution": "Перераспределение",
     "rp_project_set": "Нормирование РП",
+    "position_ref": "Справочник должностей",
+    "position_fix": "Исправления должностей",
+    "project_flag": "ЛЦ/СКБ",
+    "team_add": "Добавлен в команду",
+    "team_remove": "Убран с проекта",
     "early_stage": "Решение по опережению",
     "outside_session": "Выплата вне сессии",
     "snapshot": "Закрытие квартала",
@@ -627,6 +634,8 @@ elif page == "Проекты":
             [r for r in assignments if r["project_code"] == project["project_code"]],
             hide_index=True,
         )
+        render_team_forms(service, registry, project)
+        render_lc_skb(service, project, as_of)
         st.button(
             "Новый калькулятор для этой очереди",
             key="open_new_calc",
@@ -636,6 +645,9 @@ elif page == "Проекты":
         render_project_milestones(service, registry, project["project_code"])
     else:
         st.info("Справочник проектов пока пуст.")
+
+elif page == "Должности":
+    render_positions(service, registry)
 
 elif page == "Проблемы":
     st.subheader("Проблемы расчёта")
