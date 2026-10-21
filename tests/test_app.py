@@ -264,3 +264,12 @@ def test_new_calc_screen_creates_calculator(app):
     assert not ui.exception
     assert any("Калькулятор создан" in s.value for s in ui.success)
     assert Registry(path).rows("calc_milestone")
+
+
+def test_demo_mode_banner(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOV_DB_PATH", str(tmp_path / "demo.sqlite"))
+    monkeypatch.setenv("SOV_DEMO", "1")
+    ui = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=60)
+    ui.run()
+    assert not ui.exception
+    assert any("Демо-режим" in w.value for w in ui.sidebar.warning)

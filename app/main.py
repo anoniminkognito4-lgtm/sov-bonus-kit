@@ -49,6 +49,12 @@ def database(path):
 
 role = st.sidebar.selectbox("Роль", [ADMIN, "Руководитель", "Сотрудник"], key="role")
 registry = database(os.environ.get("SOV_DB_PATH", str(ROOT / "build/sov.sqlite")))
+if os.environ.get("SOV_DEMO") == "1":
+    st.sidebar.warning(
+        "Демо-режим: отдельная база с условными данными. Начните с экрана «Загрузка» — "
+        "кнопка «Загрузить все условные образцы». Рабочая база не затрагивается. "
+        "Начать демо заново: закройте окно запуска и удалите папку build/demo."
+    )
 quarters = [f"{year}-Q{number}" for year in range(2025, 2029) for number in range(1, 5)]
 selected_quarter = st.sidebar.selectbox("Квартал", quarters, index=6, key="quarter")
 

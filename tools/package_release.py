@@ -1,4 +1,7 @@
-"""Упаковка переносимого исходного комплекта без окружения, БД и локальных кешей."""
+"""Упаковка переносимого комплекта без окружения, БД, локальных кешей и внутренней методологии.
+
+`docs/methodology` — внутренний документ компании (README): в архив для скачивания не входит.
+"""
 
 import argparse
 import hashlib
@@ -19,7 +22,12 @@ FILES = (
     "check.bat",
     "run.sh",
     "setup.sh",
+    "run.command",
+    "demo.command",
+    "demo.bat",
 )
+# Внутренние документы и локальные данные — никогда в архив.
+EXCLUDED = ("docs/methodology",)
 
 
 def package(output):
@@ -33,6 +41,7 @@ def package(output):
             if p.is_file()
             and "__pycache__" not in p.parts
             and p.suffix.lower() not in (".pyc", ".sqlite", ".db", ".xlsm", ".xlsb")
+            and not any(p.relative_to(ROOT).as_posix().startswith(e) for e in EXCLUDED)
         )
     with ZipFile(output, "w", ZIP_DEFLATED) as archive:
         for path in sorted(inputs):
