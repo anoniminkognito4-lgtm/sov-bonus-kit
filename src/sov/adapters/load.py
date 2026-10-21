@@ -97,6 +97,7 @@ def table_loads(assignments, block, completion_of, params=DEFAULT_PARAMS):
     dates = {row[0] for row in params.position_loads if row[0] > "0001-01-01"}
     result = {a["id"]: [] for a in assignments}
     issues = {a["id"]: set() for a in assignments}
+    first_table = min(dates, default=None)
     for begin, end, active in _segments(assignments, dates):
         values = {}
         for a in active:
@@ -108,6 +109,13 @@ def table_loads(assignments, block, completion_of, params=DEFAULT_PARAMS):
                 issues[a["id"]].add(
                     "LOAD_BEFORE_TABLE" if later is not None else "LOAD_POSITION_UNKNOWN"
                 )
+            elif first_table and begin > first_table:
+                base = position_load(
+                    block, a["position"], a["stage"], completion_of(a), first_table, params
+                )
+                if base is not None and abs(base - value) > 1e-12:
+                    # Ожидаемое расхождение с Excel-калькуляторами (D-059).
+                    issues[a["id"]].add("LOAD_TABLE_V2")
             values[a["id"]] = value
         queues = {}
         for a in active:

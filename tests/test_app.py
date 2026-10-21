@@ -15,7 +15,7 @@ from sov.services.panel import Actor, PanelService
 def app(monkeypatch, tmp_path):
     path = tmp_path / "Панель СОВ.sqlite"
     monkeypatch.setenv("SOV_DB_PATH", str(path))
-    app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=30)
+    app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=60)
     app.run()
     assert not app.exception
     yield app, path

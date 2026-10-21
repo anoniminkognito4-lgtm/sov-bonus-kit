@@ -46,24 +46,32 @@ def test_department_and_position_tables_by_date():
         position_load("ДРП", "Руководитель группы разработки продукта", 4, False, "2026-01-01")
         == 0.1665
     )
+    # С 01.07.2026 — слайд 18 v2 (D-059): ДРП снижена, второе название РППП тоже.
+    assert position_load("ДРП", rppp, 4, False, "2026-07-01") == 0.14
+    assert (
+        position_load("ДРП", "Руководитель группы разработки продукта", 4, False, "2026-08-01")
+        == 0.14
+    )
     assert position_load("ДРП", rppp, 4, True, "2026-01-01") == 0.08325  # дострой
     assert position_load("ДРП", rppp, 4, False, "2025-06-30") is None  # до 01.07.2025 таблицы нет
     gip = "Главный инженер проекта"
     assert position_load("БПСК", gip, 5, False, "2026-10-01") == 0.5
     assert position_load("БПСК", "Главный архитектор проекта", 5, False, "2026-01-01") == 0.15
+    # Главного архитектора на слайде нет: после 01.07.2026 остаётся значение макрокниги.
+    assert position_load("БПСК", "Главный архитектор проекта", 5, False, "2026-08-01") == 0.15
     junior = "Младший менеджер по разработке продукта"
     assert position_load("ДРП", junior, 2, False, "2026-08-01") is None
-    assert (
-        position_load("БС", "Старший менеджер по строительству (фасады)", 2, False, "2026-08-01")
-        == 0.25
-    )
+    senior = "Старший менеджер по строительству (фасады)"
+    assert position_load("БС", senior, 2, False, "2026-06-30") == 0.25  # макрокнига
+    assert position_load("БС", senior, 2, False, "2026-08-01") == 0  # слайд 18 v2
     assert position_load("БС", "Младший менеджер по строительству", 3, False, "2026-08-01") is None
 
 
 def test_completion_rule_against_macrobook_file():
     # Дострой = этап 5 × 0,5; СКБ/ЛЦ = этап 2 × 0,5. Расхождения файла — D-061.
     mismatches = set()
-    for _, block, names, stages, completion, special in DEFAULT_PARAMS.position_loads:
+    rows = [r for r in DEFAULT_PARAMS.position_loads if r[0] == "2025-07-01"]
+    for _, block, names, stages, completion, special in rows:
         if completion is not None and completion != pytest.approx(stages[4] * 0.5):
             mismatches.add((block, names[0], "дострой"))
         if special is not None and special != pytest.approx(stages[1] * 0.5):
@@ -76,7 +84,19 @@ def test_completion_rule_against_macrobook_file():
         ("БПП", "Заместитель руководителя проекта", "СКБ/ЛЦ"),
         ("БПП", "Менеджер проекта", "СКБ/ЛЦ"),
     }
-    assert sum(row[1] == "БС" for row in DEFAULT_PARAMS.position_loads) == 21
+    assert sum(row[1] == "БС" for row in rows) == 21
+    v2 = [r for r in DEFAULT_PARAMS.position_loads if r[0] == "2026-07-01"]
+    assert len(v2) == 27 and not any(r[1] == "БПП" for r in v2)
+    v2_mismatches = {
+        (block, names[0])
+        for _, block, names, stages, completion, special in v2
+        if (completion is not None and completion != pytest.approx(stages[4] * 0.5))
+        or (special is not None and special != pytest.approx(stages[1] * 0.5))
+    }
+    assert v2_mismatches == {
+        ("БПСК", "Руководитель проекта проектирования"),  # дострой 5% по слайду
+        ("БПСК", "Главный инженер проекта ИС"),  # СКБ/ЛЦ 25% по слайду
+    }
 
 
 def test_queues_split_and_normalised_to_100_percent():
@@ -116,7 +136,10 @@ def test_single_project_below_100_percent_by_mode():
     loads, _ = table_loads(rows, "ДРП", lambda a: False)
     assert loads["a"] == [{"date_from": "2025-07-01", "date_to": None, "load": 1.0}]
     loads, _ = table_loads(rows, "ДРП", lambda a: False, QUEUES_ONLY)
-    assert loads["a"] == [{"date_from": "2025-07-01", "date_to": None, "load": 0.333}]
+    assert loads["a"] == [
+        {"date_from": "2025-07-01", "date_to": "2026-06-30", "load": 0.333},  # макрокнига
+        {"date_from": "2026-07-01", "date_to": None, "load": 0.25},  # слайд 18 v2
+    ]
 
 
 GIP, MRP, RPP = (
@@ -132,7 +155,7 @@ GIP, MRP, RPP = (
         # К1: БПСК, ГИП, один проект на 5 этапе (50%).
         ([("A", "1", 5, GIP)], "БПСК", 2_400_000, 1_200_000),
         # К2: ДРП, МРП, один проект на 4 этапе (33,3%).
-        ([("A", "1", 4, MRP)], "ДРП", 2_400_000, 799_200),
+        ([("A", "1", 4, MRP)], "ДРП", 2_400_000, 600_000),  # v2: 25%
         # К3: ГИП, проект А на 5 этапе + проект Б на 2 этапе: 150% — режимы совпадают.
         ([("A", "1", 5, GIP), ("B", "1", 2, GIP)], "БПСК", 3_600_000, 3_600_000),
         # К4: ГИП, две очереди проекта А на 4 этапе: 37,5% + 37,5% → 50% + 50% в обоих.
@@ -195,11 +218,23 @@ def test_mp_table_and_rule_differ_with_completion_stage():
     assert [rule["a"][0]["load"], rule["b"][0]["load"]] == [0.5, 0.5]
 
 
+def test_table_v2_difference_is_its_own_reason():
+    mrp = [assignment("a", "P", "1", 4, "2026-01-01", position="Менеджер по разработке продукта")]
+    _, issues = table_loads(mrp, "ДРП", lambda a: False)
+    assert issues["a"] == {"LOAD_TABLE_V2"}  # 33,3% → 25% с 01.07.2026
+    gip = [assignment("b", "P", "1", 4, "2026-01-01", position="Главный инженер проекта")]
+    _, issues = table_loads(gip, "БПСК", lambda a: False)
+    assert not issues["b"]  # у ГИП на 4 этапе таблицы совпадают
+
+
 def test_no_table_before_2025_07_01():
     rows = [assignment("a", "P", "1", 4, "2025-04-01", position="Менеджер по разработке продукта")]
     loads, issues = table_loads(rows, "ДРП", lambda a: False, QUEUES_ONLY)
-    assert [(r["date_from"], r["load"]) for r in loads["a"]] == [("2025-07-01", 0.333)]
-    assert issues["a"] == {"LOAD_BEFORE_TABLE"}
+    assert [(r["date_from"], r["load"]) for r in loads["a"]] == [
+        ("2025-07-01", 0.333),
+        ("2026-07-01", 0.25),
+    ]
+    assert issues["a"] == {"LOAD_BEFORE_TABLE", "LOAD_TABLE_V2"}
 
 
 def test_unknown_position_reported():
@@ -381,7 +416,12 @@ def test_macrobook_csv_is_the_default_table_and_replaceable(capsys):
     from load_table_param import main, read_table
 
     source = ROOT / "config/load_table_macrobook.csv"
-    assert read_table(source, "2025-07-01") == DEFAULT_PARAMS.position_loads
-    main([str(source), "2025-07-01", "--edition", "SOV-test", "--effective-from", "2026-Q3"])
+    v2 = ROOT / "config/load_table_slide18_v2.csv"
+    tables = read_table(source, "2025-07-01") + read_table(v2, "2026-07-01")
+    assert tables == DEFAULT_PARAMS.position_loads
+    main(
+        [str(source), "2025-07-01", "--add", str(v2), "2026-07-01"]
+        + ["--edition", "SOV-test", "--effective-from", "2026-Q3"]
+    )
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out), delimiter=";"))
     assert params_for_quarter(rows, "2026-Q3").position_loads == DEFAULT_PARAMS.position_loads

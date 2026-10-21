@@ -4,6 +4,7 @@ CSV: UTF-8, «;», проценты числами с запятой. Колон
 Этап 1–5, %; Дострой, %; СКБ, ЛЦ, %. Пустая ячейка — значения нет.
 
     uv run python tools/load_table_param.py config/load_table_macrobook.csv 2025-07-01 \
+        --add config/load_table_slide18_v2.csv 2026-07-01 \
         --edition SOV-v2-2026Q3 --effective-from 2026-Q3 > build/position_loads_param.csv
 
 Результат загружается как файл параметров (`edition;name;value`) и заменяет таблицу
@@ -52,10 +53,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("csv")
     parser.add_argument("begin", help="дата начала действия ГГГГ-ММ-ДД")
+    parser.add_argument(
+        "--add", nargs=2, action="append", default=[], metavar=("CSV", "BEGIN"),
+        help="ещё одна таблица со своей датой начала действия",
+    )
     parser.add_argument("--edition")
     parser.add_argument("--effective-from")
     args = parser.parse_args(argv)
     table = read_table(args.csv, args.begin)
+    for path, begin in args.add:
+        table += read_table(path, begin)
     if args.edition:
         writer = csv.writer(sys.stdout, delimiter=";", lineterminator="\n")
         writer.writerow(("edition", "name", "value"))
