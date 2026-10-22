@@ -19,8 +19,6 @@ GAPS = {
     "POSITION_UNRECOGNIZED",
     "ASSIGNMENT_INCOMPLETE",
 }
-# Блокируют расчёт даже при загрузке из файла 1С (D-098).
-ALWAYS_BLOCKING = {"ASSIGNMENT_INCOMPLETE"}
 NORMALIZE_LITERAL = "буквально"
 NORMALIZE_QUEUES = "только деление на очереди"
 
@@ -300,22 +298,23 @@ class LoadPlanner:
             return None, "файл назначений", []
         rows, source, codes = planned
         if codes & GAPS:
-            if file_rows and rows:
-                # Правило покрывает не весь срок (например, до начала таблицы):
-                # пробелы заполняются загрузкой из файла 1С.
-                filled = sorted(rows + _uncovered(file_rows, rows), key=lambda r: r["date_from"])
-                issues = [(code, code in ALWAYS_BLOCKING) for code in sorted(codes)]
-                if _differs(file_rows, rows):
-                    issues.append(("LOAD_FILE_DIFFERS", False))
-                return filled, f"{source} + файл назначений", issues
+            # Правило не дало загрузку на весь срок или на часть срока: назначение неполное.
+            # Загрузка из файла 1С в расчёт не берётся, только подсказка (п. 3.1, D-102).
+            issues = [(code, code == "ASSIGNMENT_INCOMPLETE") for code in sorted(codes)]
+            if "ASSIGNMENT_INCOMPLETE" not in codes:
+                issues.append(("ASSIGNMENT_INCOMPLETE", True))
             if file_rows:
-                issues = [(code, code in ALWAYS_BLOCKING) for code in sorted(codes)]
-                return None, "файл назначений", issues
-            return rows or None, source, [(code, code in GAPS) for code in sorted(codes)]
+                issues.append(("LOAD_FILE_HINT", False))
+            return rows, f"{source} — не на весь срок", sorted(issues)
         issues = [(code, False) for code in sorted(codes)]
         if file_rows and _differs(file_rows, rows):
             issues.append(("LOAD_FILE_DIFFERS", False))
         return rows, source, issues
+
+    def file_hint(self, assignment, rows):
+        """Загрузка файла назначений на дни, где правило значения не дало (подсказка)."""
+        file_rows = self.adapter.rows("assignment_load", assignment_id=assignment["id"])
+        return sorted(_uncovered(file_rows, rows or []), key=lambda r: r["date_from"])
 
     def _plan(self, employee):
         block = department_block(employee["department"], self.params)

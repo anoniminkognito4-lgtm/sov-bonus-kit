@@ -143,10 +143,9 @@ def test_registry_unrecognized_position_is_a_question(panel):
     identifier = setup_bs(panel, "Руководитель строитльства")
     calculation = panel.calculate("2026-Q3", [identifier])
     person = calculation.results[identifier]["case"]["employees"][0]
-    assert person["load_source"] == "файл назначений"
-    assert ("POSITION_UNRECOGNIZED", False) in {
-        (p["code"], p["blocking"]) for p in calculation.problems
-    }
+    assert person["periods"] == []
+    codes = {(p["code"], p["blocking"]) for p in calculation.problems}
+    assert {("POSITION_UNRECOGNIZED", False), ("ASSIGNMENT_INCOMPLETE", True)} <= codes
 
 
 def test_registry_temporary_kpi_is_mp(panel):

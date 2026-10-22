@@ -391,9 +391,16 @@ def test_registry_uses_position_table_for_dup(panel):
     # 4 этап ГИП — 75%; один проект, режим «буквально» доводит до 100% (И-9).
     assert {p["load"] for p in person["periods"]} == {1.0}
     assert person["load_source"].startswith("таблица загрузки (БПСК")
-    # С 01.04.2025 по 30.06.2025 таблицы ещё нет — этот период взят из файла.
-    assert person["load_source"].endswith("+ файл назначений")
-    assert {i["code"] for i in person["load_issues"]} == {"LOAD_BEFORE_TABLE"}
+    # С 01.04.2025 по 30.06.2025 таблицы ещё нет: загрузка из файла в расчёт не берётся,
+    # назначение неполное, файл — только подсказка (п. 3.1, D-102).
+    assert min(p["from"] for p in person["periods"]) == "2025-07-01"
+    assert {(i["code"], i["blocking"]) for i in person["load_issues"]} == {
+        ("ASSIGNMENT_INCOMPLETE", True),
+        ("LOAD_BEFORE_TABLE", False),
+        ("LOAD_FILE_HINT", False),
+    }
+    assert person["load_hint"][0]["date_from"] == "2025-04-01"
+    assert person["load_hint"][0]["date_to"] == "2025-06-30"
 
 
 def test_registry_position_without_load_is_incomplete(panel):
@@ -407,7 +414,7 @@ def test_registry_position_without_load_is_incomplete(panel):
     )
     calculation = panel.calculate("2026-Q3", [identifier])
     person = calculation.results[identifier]["case"]["employees"][0]
-    assert person["load_source"] == "файл назначений"
+    assert person["periods"] == []  # загрузка из файла в расчёт не берётся
     codes = {(p["code"], p["blocking"]) for p in calculation.problems}
     assert ("ASSIGNMENT_INCOMPLETE", True) in codes
     assert "LOAD_POSITION_UNKNOWN" not in {c for c, _ in codes}

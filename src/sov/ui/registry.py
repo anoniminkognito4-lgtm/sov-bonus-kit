@@ -260,6 +260,12 @@ def render_calculator(service, view, quarter, as_of, closed=None):
                     f"{p['from']}…{p['to']}: {p['load']:.0%}" for p in person.get("periods", [])
                 )
                 st.caption(f"Загрузка: {loads or '—'} · источник: {person.get('load_source', '—')}")
+                if person.get("load_hint"):
+                    hint = ", ".join(
+                        f"{h['date_from']}…{h['date_to'] or '…'}: {h['load']:.0%}"
+                        for h in person["load_hint"]
+                    )
+                    st.caption(f"Подсказка из файла назначений (в расчёт не берётся): {hint}")
                 st.dataframe(
                     [
                         {

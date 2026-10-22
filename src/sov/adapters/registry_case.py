@@ -226,6 +226,11 @@ class RegistryAdapter:
             "periods": self.periods(assignment, employee, end, extend, load_rows),
             "load_source": load_source,
             "load_issues": [{"code": c, "blocking": b} for c, b in load_issues],
+            "load_hint": (
+                self.loads.file_hint(assignment, load_rows)
+                if any(c == "LOAD_FILE_HINT" for c, _ in load_issues)
+                else []
+            ),
             "leave_date": leave,
             "hr_dismissal_date": employee["dismissal_date"],
             "npv_start": starts[0]["npv_start"] if starts else None,
