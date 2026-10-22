@@ -1,8 +1,18 @@
 """Проверка денежного баланса ФП/проекта до применения индивидуальных процентов."""
 
+from datetime import date, timedelta
 from math import isclose, isfinite
 
 from sov.engine.rules.special import redistribution_factor
+
+
+def _workdays_before(day, count):
+    current = date.fromisoformat(day)
+    while count:
+        current -= timedelta(days=1)
+        if current.weekday() < 5:
+            count -= 1
+    return current.isoformat()
 
 
 def validate_redistribution(context, limit=0.3):
@@ -33,6 +43,12 @@ def validate_redistribution(context, limit=0.3):
             raise ValueError("РФП не может менять бонус себе; укажите его табельный номер")
         if not row.get("approved_date") or not row.get("basis"):
             raise ValueError("Нужны дата согласования и основание")
+        leave = member["employee"].get("leave_date") or member["employee"].get("hr_dismissal_date")
+        if leave and row["approved_date"] > _workdays_before(leave, 5):
+            raise ValueError(
+                "Перераспределение применяется только к действующему сотруднику: решение "
+                "не позднее чем за 5 рабочих дней до увольнения (СОВ v3, сл. 32)"
+            )
         group = (member["project_code"], member["queue"], member["stage"], member["fp"])
         peers = [
             m

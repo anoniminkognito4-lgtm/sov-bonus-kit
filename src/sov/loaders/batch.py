@@ -21,6 +21,8 @@ SAMPLE_ORDER = (
     "holidays.csv",
     "redistribution.csv",
     "rp_project_sets.csv",
+    "positions.csv",
+    "position_fixes.csv",
 )
 
 

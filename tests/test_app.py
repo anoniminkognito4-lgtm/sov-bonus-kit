@@ -1,5 +1,7 @@
 """Smoke-проверки Streamlit и полный сценарий условного квартала через UI."""
 
+from datetime import date
+
 import pytest
 from conftest import ROOT
 from streamlit.testing.v1 import AppTest
@@ -13,7 +15,7 @@ from sov.services.panel import Actor, PanelService
 def app(monkeypatch, tmp_path):
     path = tmp_path / "Панель СОВ.sqlite"
     monkeypatch.setenv("SOV_DB_PATH", str(path))
-    app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=30)
+    app = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=60)
     app.run()
     assert not app.exception
     yield app, path
@@ -41,9 +43,13 @@ def test_every_screen_opens_with_loaded_samples(app):
     ui.button(key="load_demo").click().run()
     assert not ui.exception
     for page in (
+        "Реестр",
+        "Калькулятор",
         "Обзор",
         "Сотрудники",
         "Проекты",
+        "Должности",
+        "Люди",
         "Проблемы",
         "Ручные решения",
         "Расчёт и закрытие",
@@ -78,7 +84,7 @@ def test_quarter_ui_load_preview_fix_calculate_close_export(app, tmp_path):
         ui.button(key="apply_upload").click().run()
         assert not ui.exception
     navigate(ui, "Ручные решения")
-    assignment = next(a for a in registry.rows("assignment") if a["tab_no"] == "T0039")
+    assignment = next(a for a in registry.rows("assignment") if a["person_id"] == "T0039")
     ui.selectbox(key="decision_assignment").set_value(assignment["id"]).run()
     ui.checkbox(key="approve_early").check()
     ui.text_area(key="decision_basis").set_value("Условное согласование")
@@ -152,7 +158,7 @@ def test_whatif_bs_kpi_and_salary_controls(app):
         if adapter.build_case(a["id"])["bs"].get("share_transferred") == 0.6
         and a["category"] == "КУПК"
     )
-    ui.selectbox(key="person_tab").set_value(assignment["tab_no"]).run()
+    ui.selectbox(key="person_tab").set_value(assignment["person_id"]).run()
     ui.button(key="whatif_open").click().run()
     ui.checkbox(key="wi_historical").check().run()
     ui.slider(key="wi_bs").set_value(95.0).run()
@@ -167,7 +173,7 @@ def test_whatif_bs_kpi_and_salary_controls(app):
         != result["scenario"]["employees"][0]["pb"]
     )
     # МП: квартальный ползунок влияет на результат общего движка.
-    tab = next(a["tab_no"] for a in adapter.state["assignment"] if a["category"] == "МП")
+    tab = next(a["person_id"] for a in adapter.state["assignment"] if a["category"] == "МП")
     ui.selectbox(key="person_tab").set_value(tab).run()
     ui.button(key="whatif_open").click().run()
     sliders = [slider for slider in ui.slider if slider.key.startswith("wi_kpi_")]
@@ -208,3 +214,102 @@ def test_employee_and_manager_cabinets_enforce_ui_scope(app):
     ui.selectbox(key="role").set_value("Группа СОВ").run()
     assert not ui.exception
     assert ui.radio(key="page")
+
+
+def test_registry_to_calculator(app):
+    ui, _ = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    navigate(ui, "Реестр")
+    assert ui.dataframe
+    ui.checkbox(key="reg_overdue").check().run()
+    assert not ui.exception
+    ui.button(key="reg_open_calc").click().run()
+    assert not ui.exception
+    assert ui.radio(key="page").value == "Калькулятор"
+    assert len(ui.multiselect(key="calc_selection").value) == 1
+    assert ui.expander
+
+
+def test_milestone_seed_and_project_tree(app):
+    ui, _ = app
+    navigate(ui, "Загрузка")
+    for name in ("milestones/ms_projects.csv", "milestones/ms_seed.xlsx"):
+        ui.selectbox(key="sample_file").set_value(name).run()
+        if name.endswith(".xlsx"):
+            ui.checkbox(key="ms_seed").check().run()
+        ui.button(key="preview_upload").click().run()
+        assert not ui.exception
+        ui.button(key="apply_upload").click().run()
+        assert not ui.exception
+    navigate(ui, "Проекты")
+    assert ui.selectbox(key="ms_history").options
+    assert not ui.exception
+
+
+def test_new_calc_screen_creates_calculator(app):
+    ui, path = app
+    navigate(ui, "Загрузка")
+    for name in ("milestones/ms_projects.csv", "milestones/ms_seed.xlsx"):
+        ui.selectbox(key="sample_file").set_value(name).run()
+        ui.button(key="preview_upload").click().run()
+        ui.button(key="apply_upload").click().run()
+        assert not ui.exception
+    navigate(ui, "Обзор")
+    assert not ui.exception
+    navigate(ui, "Новый калькулятор")
+    ui.selectbox(key="nc_project").set_value("TP-M1").run()
+    ui.number_input(key="nc_stage").set_value(4).run()
+    ui.date_input(key="nc_f2_TP-M1_1_4").set_value(date(2025, 12, 1)).run()
+    assert not ui.exception and ui.dataframe
+    ui.button(key="nc_create").click().run()
+    assert not ui.exception
+    assert any("Калькулятор создан" in s.value for s in ui.success)
+    assert Registry(path).rows("calc_milestone")
+
+
+def test_demo_mode_banner(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOV_DB_PATH", str(tmp_path / "demo.sqlite"))
+    monkeypatch.setenv("SOV_DEMO", "1")
+    ui = AppTest.from_file(str(ROOT / "app/main.py"), default_timeout=60)
+    ui.run()
+    assert not ui.exception
+    assert any("Демо-режим" in w.value for w in ui.sidebar.warning)
+
+
+def test_team_forms_and_positions_screen(app):
+    ui, path = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    navigate(ui, "Должности")
+    assert any("распознаны" in s.value for s in ui.success)
+    navigate(ui, "Проекты")
+    ui.selectbox(key="team_tab_TP-T01_1").set_value("T0002").run()
+    ui.date_input(key="team_from_TP-T01_1").set_value(date(2026, 8, 1)).run()
+    ui.selectbox(key="team_cat_TP-T01_1").set_value("РУПК").run()
+    ui.selectbox(key="team_sov_TP-T01_1").set_value("Вехи").run()
+    ui.text_input(key="team_basis_TP-T01_1").set_value("Условный приказ").run()
+    ui.button(key="team_add_TP-T01_1").click().run()
+    assert not ui.exception
+    assert any("Добавлено" in s.value for s in ui.success), [e.value for e in ui.error]
+    added = [
+        a
+        for a in Registry(path).rows("assignment")
+        if a["person_id"] == "T0002" and a["project_code"] == "TP-T01"
+    ]
+    assert added and added[0]["date_from"] == "2026-08-01"
+
+
+def test_upshr_sample_preview_and_apply(app):
+    ui, path = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    ui.selectbox(key="sample_file").set_value("upshr/upshr_team.xlsx").run()
+    ui.button(key="preview_upload").click().run()
+    assert not ui.exception
+    assert any("Проектные команды" in m.value for m in ui.markdown)
+    ui.button(key="apply_upload").click().run()
+    assert not ui.exception
+    assert any(e["fio"] == "Образцов Олег Олегович" for e in Registry(path).rows("employee"))
+    navigate(ui, "Люди")
+    assert ui.dataframe

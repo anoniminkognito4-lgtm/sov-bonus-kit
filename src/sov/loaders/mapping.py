@@ -5,33 +5,76 @@ import json
 from calendar import monthrange
 from datetime import date, timedelta
 
-from sov.loaders.formats import normalize_bool, normalize_date
-
 KEYS = {
     "sov_param": ("edition", "name"),
-    "employee": ("tab_no",),
-    "bgb_period": ("tab_no", "date_from"),
+    "employee": ("person_id",),
+    "person_alias": ("fio", "department"),
+    "bgb_period": ("person_id", "date_from"),
     "project": ("project_code", "queue"),
     "stage": ("project_code", "queue", "stage"),
     "milestone": ("milestone_code",),
     "milestone_plan_version": ("milestone_code", "version"),
+    "milestone_key": ("natural_key",),
+    "calc_milestone": ("project_code", "queue", "stage", "milestone_code"),
+    "position_ref": ("block", "position"),
+    "position_fix": ("wrong",),
+    "project_flag": ("project_code", "queue", "date_from"),
     "assignment": ("id",),
     "assignment_load": ("assignment_id", "date_from"),
-    "individual_date": ("tab_no", "milestone_code"),
+    "individual_date": ("person_id", "milestone_code"),
     "npv": ("project_code", "quarter", "fm_version"),
     "start_npv": ("assignment_id",),
     "bs_share": ("project_code", "quarter"),
-    "kpi": ("tab_no", "quarter"),
+    "kpi": ("person_id", "quarter"),
     "stage5_expense": ("project_code", "queue", "stage"),
     "key_rate": ("date_from",),
     "holiday": ("date",),
-    "redistribution": ("tab_no", "milestone_code"),
-    "rp_project_set": ("tab_no", "project_code", "queue"),
+    "redistribution": ("person_id", "milestone_code"),
+    "rp_project_set": ("person_id", "project_code", "queue"),
 }
 
 
 class Unmatched(ValueError):
-    pass
+    """Строка не сопоставлена; `problem` — вопрос для предпросмотра (например, о человеке)."""
+
+    def __init__(self, message, problem=None):
+        super().__init__(message)
+        self.problem = problem
+
+
+# Таблицы, где строка ссылается на сотрудника (D-101).
+PERSON_KINDS = {
+    "bgb_period",
+    "assignment",
+    "kpi",
+    "rp_project_set",
+    "individual_date",
+    "start_npv",
+    "redistribution",
+}
+
+
+def resolve_person(state, fio, department=None, position=None, create=False, reserved=()):
+    """ФИО → person_id через общую функцию сопоставления. create — можно завести нового."""
+    from sov.loaders import persons
+
+    match = persons.People(state).match(fio, department, position)
+    if match.status == "found":
+        return match.person_id, False
+    if match.status == "new":
+        if not create:
+            raise Unmatched(f"Сотрудник не найден: {persons.clean(fio)}")
+        return persons.next_person_id(state, reserved), True
+    question = persons.question(match, fio, department, position)
+    raise Unmatched(f"{question['message']} — {question['fio']}", question)
+
+
+def _person(kind, row, state):
+    """Строка с ФИО вместо номера: номер берётся из общего сопоставления."""
+    if row.get("person_id") or not row.get("fio"):
+        return row
+    person_id, _ = resolve_person(state, row["fio"], row.get("department"), row.get("position"))
+    return {**row, "person_id": person_id}
 
 
 def row_key(table, row):
@@ -41,8 +84,8 @@ def row_key(table, row):
     return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
 
 
-def assignment_id(tab_no, project_code, queue, stage):
-    value = json.dumps([tab_no, project_code, queue, stage], ensure_ascii=False)
+def assignment_id(person_id, project_code, queue, stage):
+    value = json.dumps([person_id, project_code, queue, stage], ensure_ascii=False)
     return "ASG-" + hashlib.sha256(value.encode()).hexdigest()[:24]
 
 
@@ -68,15 +111,31 @@ def milestone_for(state, row):
 
 def map_row(kind, row, state):
     warnings = []
-    if kind == "milestone":
-        row, warnings = map_milestone(row, state)
+    if kind == "employee":
+        return _employee(row, state), warnings
+    if kind in PERSON_KINDS:
+        row = _person(kind, row, state)
+    if kind == "position_ref":
+        return [
+            (
+                "position_ref",
+                {
+                    "block": row["Подразделение"],
+                    "position": row["Должность"],
+                    "category": row.get("Категория"),
+                    "sov_type": row.get("Вид СОВ по умолчанию"),
+                    "load_row": row.get("Загрузка (строка слайда 18 или правило)"),
+                    "comment": row.get("Источник и комментарий"),
+                },
+            )
+        ], warnings
     if kind in ("bgb_period", "assignment", "kpi", "rp_project_set"):
-        require(state, "employee", tab_no=row["tab_no"])
+        require(state, "employee", person_id=row["person_id"])
     if kind in ("stage", "assignment", "stage5_expense", "rp_project_set"):
         require(state, "project", project_code=row["project_code"], queue=row["queue"])
     if kind in ("npv", "bs_share") and not find(state, "project", project_code=row["project_code"]):
         raise Unmatched(f"Не сопоставлен проект {row['project_code']}")
-    if kind in ("assignment", "milestone", "stage5_expense"):
+    if kind in ("assignment", "stage5_expense"):
         require(
             state, "stage", project_code=row["project_code"], queue=row["queue"], stage=row["stage"]
         )
@@ -97,7 +156,7 @@ def map_row(kind, row, state):
             "key_milestone_name": row.pop("key_milestone"),
         }
     if kind == "assignment":
-        identity = assignment_id(row["tab_no"], row["project_code"], row["queue"], row["stage"])
+        identity = assignment_id(row["person_id"], row["project_code"], row["queue"], row["stage"])
         previous = find(state, "assignment", id=identity)
         if previous and any(previous[0][k] != row[k] for k in ("category", "role", "sov_type")):
             old = previous[0]
@@ -132,6 +191,13 @@ def map_row(kind, row, state):
                     else None
                 )
             )
+            if old["end_reason"] and not row.get("end_reason"):
+                # Ручное «Убрать с проекта» не отменяется файлом без даты ухода (D-100).
+                data["date_to"], data["end_reason"] = old["date_to"], old["end_reason"]
+                warnings.append(
+                    f"{row['person_id']} {row['project_code']}/{row['queue']}/{row['stage']}: "
+                    f"в файле нет даты ухода, сохранено «{old['end_reason']}» {old['date_to']}"
+                )
         load = {
             "assignment_id": identity,
             "date_from": row["date_from"],
@@ -143,7 +209,7 @@ def map_row(kind, row, state):
         matches = find(
             state,
             "assignment",
-            tab_no=row["tab_no"],
+            person_id=row["person_id"],
             project_code=row["project_code"],
             stage=row["stage"],
         )
@@ -158,10 +224,10 @@ def map_row(kind, row, state):
             ).isoformat()
             if row.get("fixed_date") != expected:
                 raise ValueError("NPV перевода должен быть зафиксирован на конец месяца перевода")
-        row = {k: v for k, v in row.items() if k not in ("tab_no", "project_code", "stage")}
+        row = {k: v for k, v in row.items() if k not in ("person_id", "project_code", "stage")}
         row.update(assignment_id=matches[0]["id"], corrections=None)
     if kind in ("individual_date", "redistribution"):
-        require(state, "employee", tab_no=row["tab_no"])
+        require(state, "employee", person_id=row["person_id"])
         milestone = milestone_for(state, row)
         if kind == "redistribution" and any(
             row.get(k) is None for k in ("pct", "decided_by", "approved_date", "basis")
@@ -174,94 +240,16 @@ def map_row(kind, row, state):
             )
         row = {k: v for k, v in row.items() if k not in ("project_code", "stage", "milestone")}
         row["milestone_code"] = milestone["milestone_code"]
-    if kind == "milestone":
-        plan = row.pop("plan_date")
-        versions = find(state, "milestone_plan_version", milestone_code=row["milestone_code"])
-        latest = max(versions, key=lambda r: r["version"]) if versions else None
-        records = [(kind, row)]
-        if row["is_key"]:
-            stage = require(
-                state,
-                "stage",
-                project_code=row["project_code"],
-                queue=row["queue"],
-                stage=row["stage"],
-            )
-            records.append(("stage", {**stage, "key_milestone_code": row["milestone_code"]}))
-        if latest is None or latest["plan_date"] != plan:
-            records.append(
-                (
-                    "milestone_plan_version",
-                    {
-                        "milestone_code": row["milestone_code"],
-                        "version": latest["version"] + 1 if latest else 1,
-                        "plan_date": plan,
-                        "basis": "Загрузка файла вех",
-                    },
-                )
-            )
-        return records, warnings
     return [(kind, row)], warnings
 
 
-def map_milestone(raw, state):
-    stages = {
-        "Первый этап": 1,
-        "Второй этап": 2,
-        "Третий этап": 3,
-        "Четвертый этап": 4,
-        "Четвёртый этап": 4,
-        "Пятый этап": 5,
-    }
-    stage = stages.get(str(raw["Этап"]).strip())
-    if stage is None:
-        raise ValueError("Не распознан этап вехи")
-    warnings = []
-    queue = str(raw["Очередь/корпус/строение"] or "1")
-    code = raw.get("Код проекта")
-    if not code:
-        project = require(state, "project", name=raw["Проект"], queue=queue)
-        code = project["project_code"]
-        warnings.append("Проект сопоставлен по названию, а не коду 1С")
-    require(state, "project", project_code=str(code), queue=queue)
-    milestone_code = raw.get("Код вехи")
-    if not milestone_code:
-        matches = find(
-            state,
-            "milestone",
-            project_code=str(code),
-            queue=queue,
-            stage=stage,
-            name=raw["Наименование"],
+def _employee(row, state):
+    """Кадры: строка с номером (условные тесты) или по ФИО — найти или завести человека."""
+    row = dict(row)
+    if not row.get("person_id"):
+        person_id, _ = resolve_person(
+            state, row["fio"], row.get("department"), row.get("position"), create=True
         )
-        if len(matches) == 1:
-            milestone_code = matches[0]["milestone_code"]
-        elif not matches:
-            key = json.dumps([code, queue, stage, raw["Наименование"]], ensure_ascii=False)
-            milestone_code = "MS-" + hashlib.sha256(key.encode()).hexdigest()[:24]
-        else:
-            raise Unmatched("Неоднозначное сопоставление вехи")
-        warnings.append("Веха сопоставлена по составному ключу, а не коду 1С")
-    fact = normalize_date(raw["Фактический срок"])
-    closed = (
-        normalize_date(raw.get("Дата закрытия в 1С"))
-        if "Дата закрытия в 1С" in raw
-        else (fact if raw["Статус"] == "Выполнена" else None)
-    )
-    plan = normalize_date(raw["Плановый срок"])
-    if plan is None:
-        raise ValueError("Не задан плановый срок вехи")
-    if raw["Статус"] not in ("Выполнена", "Назначена"):
-        raise ValueError("Не распознан статус вехи")
-    return {
-        "milestone_code": str(milestone_code),
-        "project_code": str(code),
-        "queue": queue,
-        "stage": stage,
-        "name": str(raw["Наименование"]),
-        "is_key": normalize_bool(raw["Ключевая"]),
-        "status": raw["Статус"],
-        "fact_date": fact,
-        "closed_1c_date": closed,
-        "plan_date": plan,
-    }, warnings
+        row["person_id"] = person_id
+    row["fio"] = " ".join((row.get("fio") or "").split())
+    return [("employee", row)]

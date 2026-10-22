@@ -16,9 +16,19 @@ from sov.loaders.batch import SAMPLE_ORDER
 from sov.registry.session import Registry
 from sov.services.cabinet import CabinetService
 from sov.services.panel import ADMIN, Actor, PanelService
+from sov.services.registry_view import RegistryView
 from sov.ui.cabinet import render_cabinet
+from sov.ui.milestones import (
+    milestone_options,
+    render_milestone_preview,
+    render_project_milestones,
+)
+from sov.ui.new_calc import open_new_calc, render_hints, render_new_calc
+from sov.ui.people import render_people, render_person_questions, render_upshr_preview
 from sov.ui.redistribution import render_redistribution
+from sov.ui.registry import render_calculator, render_registry
 from sov.ui.scenario import render_scenario
+from sov.ui.team import render_lc_skb, render_positions, render_team_forms
 
 ROOT = Path(__file__).resolve().parents[1]
 st.set_page_config(page_title="СОВ · Расчёт бонусов", page_icon="◈", layout="wide")
@@ -41,6 +51,12 @@ def database(path):
 
 role = st.sidebar.selectbox("Роль", [ADMIN, "Руководитель", "Сотрудник"], key="role")
 registry = database(os.environ.get("SOV_DB_PATH", str(ROOT / "build/sov.sqlite")))
+if os.environ.get("SOV_DEMO") == "1":
+    st.sidebar.warning(
+        "Демо-режим: отдельная база с условными данными. Начните с экрана «Загрузка» — "
+        "кнопка «Загрузить все условные образцы». Рабочая база не затрагивается. "
+        "Начать демо заново: закройте окно запуска и удалите папку build/demo."
+    )
 quarters = [f"{year}-Q{number}" for year in range(2025, 2029) for number in range(1, 5)]
 selected_quarter = st.sidebar.selectbox("Квартал", quarters, index=6, key="quarter")
 
@@ -77,7 +93,7 @@ if role != ADMIN:
         actor = Actor(
             account,
             role,
-            grant["tab_no"],
+            grant["person_id"],
             tuple(map(tuple, grant["projects"])),
             tuple(grant["staff"]),
         )
@@ -92,9 +108,14 @@ service = PanelService(registry, Actor(author, role))
 page = st.sidebar.radio(
     "Раздел",
     [
+        "Реестр",
+        "Калькулятор",
         "Обзор",
         "Сотрудники",
         "Проекты",
+        "Новый калькулятор",
+        "Должности",
+        "Люди",
         "Загрузка",
         "Проблемы",
         "Ручные решения",
@@ -118,9 +139,9 @@ def refresh(message):
     st.rerun()
 
 
-def goto_employee(tab_no):
+def goto_employee(person_id):
     st.session_state["page"] = "Сотрудники"
-    st.session_state["focus_tab"] = tab_no
+    st.session_state["focus_tab"] = person_id
 
 
 def run_calculation(ids=None):
@@ -207,7 +228,7 @@ def display_exports(entries, results, identifier, closed=None):
 
 
 LABELS = {
-    "tab_no": "Табельный номер",
+    "person_id": "№ сотрудника",
     "fio": "ФИО",
     "department": "Подразделение",
     "project_code": "Код проекта",
@@ -306,6 +327,15 @@ TYPE_LABELS = {
     "holiday": "Календарь",
     "redistribution": "Перераспределение",
     "rp_project_set": "Нормирование РП",
+    "position_ref": "Справочник должностей",
+    "person_alias": "Решение о человеке",
+    "upshr": "Проектные команды (1С УП ШР)",
+    "person_merge": "Тот же человек",
+    "person_split": "Другой человек",
+    "position_fix": "Исправления должностей",
+    "project_flag": "ЛЦ/СКБ",
+    "team_add": "Добавлен в команду",
+    "team_remove": "Убран с проекта",
     "early_stage": "Решение по опережению",
     "outside_session": "Выплата вне сессии",
     "snapshot": "Закрытие квартала",
@@ -341,9 +371,26 @@ assignments = registry.rows("assignment")
 projects = registry.rows("project")
 calculation = current_calculation()
 closed = service.closed(selected_quarter)
+as_of = quarter_end(selected_quarter)
 
-if page == "Обзор":
+if page == "Реестр":
+    as_of = st.sidebar.date_input(
+        "Срез реестра на дату",
+        date.fromisoformat(as_of),
+        format="DD.MM.YYYY",
+        key=f"reg_as_of_{selected_quarter}",
+    ).isoformat()
+    render_registry(RegistryView(registry.rows), as_of, goto_employee)
+
+elif page == "Калькулятор":
+    render_calculator(service, RegistryView(registry.rows), selected_quarter, as_of, closed)
+
+elif page == "Новый калькулятор":
+    render_new_calc(service, registry, ROOT)
+
+elif page == "Обзор":
     st.subheader(f"Квартал {selected_quarter}")
+    render_hints(service, as_of)
     a, b, c, d = st.columns(4)
     a.metric("Сотрудники", len(employees))
     b.metric("Проекты и очереди", len(projects))
@@ -395,8 +442,14 @@ elif page == "Загрузка":
             )
         except ValueError as error:
             st.error(str(error))
-    source_name = st.selectbox("Условный образец", SAMPLE_ORDER, key="sample_file")
+    milestone_samples = sorted(
+        f"milestones/{p.name}" for p in (ROOT / "samples/milestones").glob("*.*")
+    ) + sorted(f"upshr/{p.name}" for p in (ROOT / "samples/upshr").glob("*.*"))
+    source_name = st.selectbox(
+        "Условный образец", [*SAMPLE_ORDER, *milestone_samples], key="sample_file"
+    )
     uploaded = st.file_uploader("Или выберите условный файл", type=["csv", "xlsx"])
+    options = milestone_options()
     if st.button("Предпросмотр", key="preview_upload"):
         try:
             source = ROOT / "samples" / source_name
@@ -405,7 +458,7 @@ elif page == "Загрузка":
                 folder.mkdir(parents=True, exist_ok=True)
                 source = folder / Path(uploaded.name).name
                 source.write_bytes(uploaded.getvalue())
-            st.session_state["upload_preview"] = service.preview(source)
+            st.session_state["upload_preview"] = service.preview(source, options)
         except (ValueError, OSError) as error:
             st.error(str(error))
     preview = st.session_state.get("upload_preview")
@@ -415,6 +468,11 @@ elif page == "Загрузка":
             f"{TYPE_LABELS.get(preview.kind, preview.kind)}"
         )
         table([preview.summary], hide_index=True)
+        if preview.kind == "milestone":
+            render_milestone_preview(preview)
+        if preview.kind == "upshr":
+            render_upshr_preview(preview)
+        render_person_questions(service, preview, refresh)
         if preview.changes:
             table(
                 [
@@ -498,11 +556,11 @@ elif page == "Сотрудники":
                 r["assignment_id"] for r in calculation.entries if r["calc_status"] == amount_status
             }
             matching = [a for a in matching if a["id"] in allowed]
-        tabs = {a["tab_no"] for a in matching}
-        people = {e["tab_no"]: e for e in employees if e["tab_no"] in tabs}
+        tabs = {a["person_id"] for a in matching}
+        people = {e["person_id"]: e for e in employees if e["person_id"] in tabs}
         table(
             [
-                {"Табельный номер": e["tab_no"], "ФИО": e["fio"], "Подразделение": e["department"]}
+                {"№ сотрудника": e["person_id"], "ФИО": e["fio"], "Подразделение": e["department"]}
                 for e in people.values()
             ],
             hide_index=True,
@@ -511,17 +569,17 @@ elif page == "Сотрудники":
             focus = st.session_state.pop("focus_tab", None)
             if focus in people:
                 st.session_state["person_tab"] = focus
-            tab_no = st.selectbox(
+            person_id = st.selectbox(
                 "Карточка сотрудника",
                 list(people),
                 format_func=lambda key: f"{people[key]['fio']} · {key}",
                 key="person_tab",
             )
-            card = (str(registry.path), author, tab_no)
+            card = (str(registry.path), author, person_id)
             if st.session_state.get("_audited_card") != card:
-                service.view("employee", tab_no)
+                service.view("employee", person_id)
                 st.session_state["_audited_card"] = card
-            person_assignments = [a for a in matching if a["tab_no"] == tab_no]
+            person_assignments = [a for a in matching if a["person_id"] == person_id]
             identifier = st.selectbox(
                 "Назначение",
                 [a["id"] for a in person_assignments],
@@ -554,11 +612,12 @@ elif page == "Сотрудники":
                     table(value["case"]["employees"][0]["periods"], hide_index=True)
                 with st.expander("История начислений и решений"):
                     table(
-                        [r for r in registry.rows("accrual") if r["tab_no"] == tab_no],
+                        [r for r in registry.rows("accrual") if r["person_id"] == person_id],
                         hide_index=True,
                     )
                     table(
-                        [r for r in service.decisions() if r["tab_no"] == tab_no], hide_index=True
+                        [r for r in service.decisions() if r["person_id"] == person_id],
+                        hide_index=True,
                     )
                 render_scenario(service, identifier, value["case"], selected_quarter)
             except ValueError as error:
@@ -575,20 +634,6 @@ elif page == "Проекты":
             [r for r in registry.rows("stage") if r["project_code"] == project["project_code"]],
             hide_index=True,
         )
-        st.write("Вехи")
-        latest_plans = {}
-        for plan in registry.rows("milestone_plan_version"):
-            code = plan["milestone_code"]
-            if code not in latest_plans or plan["version"] > latest_plans[code]["version"]:
-                latest_plans[code] = plan
-        table(
-            [
-                {**r, "plan": latest_plans.get(r["milestone_code"], {}).get("plan_date")}
-                for r in registry.rows("milestone")
-                if r["project_code"] == project["project_code"]
-            ],
-            hide_index=True,
-        )
         st.write("NPV по кварталам")
         table(
             [r for r in registry.rows("npv") if r["project_code"] == project["project_code"]],
@@ -599,8 +644,23 @@ elif page == "Проекты":
             [r for r in assignments if r["project_code"] == project["project_code"]],
             hide_index=True,
         )
+        render_team_forms(service, registry, project)
+        render_lc_skb(service, project, as_of)
+        st.button(
+            "Новый калькулятор для этой очереди",
+            key="open_new_calc",
+            on_click=open_new_calc,
+            args=(project["project_code"], project["queue"], 1),
+        )
+        render_project_milestones(service, registry, project["project_code"])
     else:
         st.info("Справочник проектов пока пуст.")
+
+elif page == "Должности":
+    render_positions(service, registry)
+
+elif page == "Люди":
+    render_people(registry)
 
 elif page == "Проблемы":
     st.subheader("Проблемы расчёта")
@@ -614,10 +674,10 @@ elif page == "Проблемы":
             if mode == "Все" or p["blocking"] == (mode == "Блокирующие")
         ]
         table(problems, hide_index=True)
-        tabs = sorted({p["tab_no"] for p in problems if p.get("tab_no")})
+        tabs = sorted({p["person_id"] for p in problems if p.get("person_id")})
         if tabs:
-            tab_no = st.selectbox("Сотрудник с проблемой", tabs)
-            st.button("Перейти в карточку", on_click=goto_employee, args=(tab_no,))
+            person_id = st.selectbox("Сотрудник с проблемой", tabs)
+            st.button("Перейти в карточку", on_click=goto_employee, args=(person_id,))
         download(
             "Список проблем · CSV",
             problems_file(problems),
@@ -642,7 +702,7 @@ elif page == "Проблемы":
 elif page == "Ручные решения":
     st.subheader("Ручные решения Группы СОВ")
     labels = {
-        a["id"]: f"{a['tab_no']} · {a['project_code']} · этап {a['stage']}" for a in assignments
+        a["id"]: f"{a['person_id']} · {a['project_code']} · этап {a['stage']}" for a in assignments
     }
     if not labels:
         st.info("Сначала загрузите назначения.")
@@ -765,8 +825,9 @@ elif page == "Расчёт и закрытие":
         ids = st.multiselect(
             "Выбранные назначения (пусто — все)",
             [a["id"] for a in assignments],
+            placeholder="Все назначения",
             format_func=lambda key: next(
-                f"{a['tab_no']} · {a['project_code']}" for a in assignments if a["id"] == key
+                f"{a['person_id']} · {a['project_code']}" for a in assignments if a["id"] == key
             ),
         )
         if st.button("Рассчитать", key="calculate", disabled=not assignments):
@@ -800,10 +861,10 @@ elif page == "Расчёт и закрытие":
 elif page == "Журнал":
     st.subheader("Журнал действий")
     who = st.text_input("Фильтр по автору")
-    tab_no = st.text_input("Табельный номер / код проекта")
+    person_id = st.text_input("№ сотрудника, ФИО или код проекта")
     journal = [
         r
         for r in service.journal()
-        if (not who or who in r["who"]) and (not tab_no or tab_no in str(r))
+        if (not who or who in r["who"]) and (not person_id or person_id in str(r))
     ]
     table(journal, hide_index=True)

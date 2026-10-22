@@ -25,9 +25,30 @@ class Registry:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(URL.create("sqlite", database=str(self.path)))
         metadata.create_all(self.engine)
+        self._add_missing_columns()
         with self.engine.begin() as connection:
             if connection.scalar(select(registry_state.c.revision)) is None:
                 connection.execute(insert(registry_state).values(id=1, revision=0))
+
+    def _add_missing_columns(self):
+        """База прежней версии: добавить новые колонки, данные не трогать."""
+        with self.engine.begin() as connection:
+            for table in metadata.sorted_tables:
+                existing = {
+                    row[1]
+                    for row in connection.exec_driver_sql(f'PRAGMA table_info("{table.name}")')
+                }
+                for column in table.columns:
+                    if column.name not in existing:
+                        kind = column.type.compile(self.engine.dialect)
+                        connection.exec_driver_sql(
+                            f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {kind}'
+                        )
+                        if column.name == "person_id" and "tab_no" in existing:
+                            # До D-101 сотрудник определялся табельным номером.
+                            connection.exec_driver_sql(
+                                f'UPDATE "{table.name}" SET "person_id" = "tab_no"'
+                            )
 
     @contextmanager
     def transaction(self):

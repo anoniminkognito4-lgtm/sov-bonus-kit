@@ -29,7 +29,7 @@ def render_cabinet(service, selected_quarter, as_of):
         )
         return
     options = {
-        r["id"]: f"{r['project_code']} · этап {r['stage']} · {r['tab_no']}" for r in assignments
+        r["id"]: f"{r['project_code']} · этап {r['stage']} · {r['person_id']}" for r in assignments
     }
     identifier = st.selectbox(
         "Моё назначение" if own else "Назначение команды",

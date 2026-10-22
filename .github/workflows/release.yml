@@ -1,0 +1,35 @@
+name: Архив для скачивания
+
+# Выпуск создаётся тегом вида v0.1.0: git tag v0.1.0 && git push origin v0.1.0.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Архив без окружения, баз и внутренней методологии
+        run: uv run --no-project --python 3.12 python tools/package_release.py build/sov-bonus-kit.zip
+      - name: Выпуск в Releases
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" build/sov-bonus-kit.zip \
+            --title "СОВ · панель $GITHUB_REF_NAME" \
+            --notes "Как запустить — README.md, раздел «Как запустить». Mac: run.command, Windows: run.bat, демо: demo.command / demo.bat."
+      - name: Архив как артефакт (ручной запуск)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sov-bonus-kit
+          path: build/sov-bonus-kit.zip

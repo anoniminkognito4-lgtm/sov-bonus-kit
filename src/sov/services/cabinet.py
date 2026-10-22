@@ -26,7 +26,7 @@ def public_case(case):
 
 class CabinetService:
     def __init__(self, registry, actor):
-        if actor.role not in (EMPLOYEE, MANAGER) or not actor.tab_no:
+        if actor.role not in (EMPLOYEE, MANAGER) or not actor.person_id:
             raise PermissionError("Укажите учётную запись кабинета")
         self.registry, self.actor = registry, actor
         self._panel = PanelService(registry, Actor(actor.name))
@@ -34,12 +34,12 @@ class CabinetService:
     def assignments(self, connection=None):
         rows = self.registry.rows("assignment", connection)
         if self.actor.role == EMPLOYEE:
-            return [r for r in rows if r["tab_no"] == self.actor.tab_no]
+            return [r for r in rows if r["person_id"] == self.actor.person_id]
         return [
             r
             for r in rows
             if (r["project_code"], r["queue"]) in self.actor.projects
-            and r["tab_no"] in self.actor.staff
+            and r["person_id"] in self.actor.staff
         ]
 
     def _assignment(self, identifier, connection=None):
@@ -82,7 +82,15 @@ class CabinetService:
         return {
             "assignment": {
                 k: source[k]
-                for k in ("id", "tab_no", "project_code", "queue", "stage", "category", "date_from")
+                for k in (
+                    "id",
+                    "person_id",
+                    "project_code",
+                    "queue",
+                    "stage",
+                    "category",
+                    "date_from",
+                )
             },
             "case": public_case(case),
             "result": value["result"],
@@ -124,8 +132,8 @@ class CabinetService:
 
     def view(self, identifier):
         assignment = self._assignment(identifier)
-        if self.actor.role == MANAGER or assignment["tab_no"] != self.actor.tab_no:
-            self._panel.view("employee", assignment["tab_no"])
+        if self.actor.role == MANAGER or assignment["person_id"] != self.actor.person_id:
+            self._panel.view("employee", assignment["person_id"])
 
     def statement(self, identifier, selected_quarter, *, as_of):
         card = self.card(identifier, selected_quarter, as_of=as_of)

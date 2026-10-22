@@ -34,6 +34,7 @@ FORMATS = {
         "tab_no rank project_code queue class area_k_m2 stage extra_objects is_queue "
         "is_logistics approved_date approved_by "
     ),
+    "position_fix": "wrong right",
     "case_map": "case_id tab_no project_code",
     "payroll_example": "Табельный номер ФИО Подразделение",
 }
@@ -52,6 +53,8 @@ MS_HEADERS = [
     "Критерий закрытия",
     "Фактический срок",
 ]
+# Справочник должностей (samples/positions.csv): заголовки по-русски.
+POSITION_HEADERS = ("Подразделение", "Должность", "Категория", "Вид СОВ по умолчанию")
 DATE_FIELDS = {
     "hire_date",
     "dismissal_date",
@@ -112,6 +115,8 @@ def normalize_bool(value):
 
 
 def normalize_row(raw):
+    # В условных форматах колонка tab_no — это внутренний номер сотрудника (D-101).
+    raw = {("person_id" if k == "tab_no" else k): v for k, v in raw.items()}
     row = {}
     for key, value in raw.items():
         value = value.strip() if isinstance(value, str) else value
@@ -168,6 +173,14 @@ def normalize_row(raw):
     return row
 
 
+def _fits(columns, headers):
+    """Сотрудник в строке — номером (условные тесты, колонка tab_no) или по ФИО (D-101)."""
+    needed = set(columns)
+    if "tab_no" in needed and "tab_no" not in headers and "fio" in headers:
+        needed = (needed - {"tab_no"}) | {"fio"}
+    return needed <= set(headers)
+
+
 def read_source(path):
     path = Path(path)
     if path.suffix.lower() not in (".csv", ".xlsx"):
@@ -194,11 +207,13 @@ def read_source(path):
         raise ValueError("Пустые или повторяющиеся заголовки")
     if set(MS_HEADERS) <= set(headers):
         kind = "milestone"
+    elif set(POSITION_HEADERS) <= set(headers):
+        kind = "position_ref"
     else:
         candidates = [
             (name, columns.split())
             for name, columns in FORMATS.items()
-            if set(columns.split()) <= set(headers)
+            if _fits(columns.split(), headers)
         ]
         if not candidates:
             raise ValueError("Тип не распознан: отсутствуют обязательные колонки")

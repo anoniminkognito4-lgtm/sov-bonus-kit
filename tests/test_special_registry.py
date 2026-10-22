@@ -39,7 +39,9 @@ def test_probation_release_is_recognized_in_release_quarter(panel, tmp_path):  #
     row = sample_row("hr_employees.csv")
     row.update(probation_end="2025-09-30", probation_result="пройден")
     apply(panel, csv_source(tmp_path, "Испытательный срок.csv", [row]))
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"
+    )
     panel.save_decision(
         "probation_release",
         identifier,
@@ -68,7 +70,9 @@ def test_sale_source_needs_rp_work_end_and_uses_previous_npv(panel, tmp_path):  
         )
     project["sale_date"] = "2026-01-15"
     apply(panel, csv_source(tmp_path, "Продажа проекта.csv", [project]))
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0002")
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0002"
+    )
     assert any(
         p["code"] == "MANUAL_CALC" for p in panel.calculate("2026-Q1", [identifier]).problems
     )
@@ -106,8 +110,19 @@ def milestone_copy(tmp_path, end, fact=None):
 
 def test_extension_preserves_accrued_advance_and_closed_export(panel, tmp_path):  # noqa: F811
     fix_sources(panel, tmp_path)
+    key = next(
+        m["milestone_code"]
+        for m in panel.registry.rows("milestone")
+        if m["project_code"] == "TP-T01" and m["is_key"]
+    )
+    # MILESTONES §6.3: снять факт ключевой вехи можно только решением.
+    panel.save_milestone_decision(
+        "fact_change_accept", {"milestone_code": key, "fact": None}, "Условное письмо", "f.pdf"
+    )
     apply(panel, milestone_copy(tmp_path, "30.09.2026"))
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"
+    )
     old_case = panel.calculate("2026-Q3", [identifier]).results[identifier]["case"]
     old_forecast = panel.simulate(
         identifier, {"dates": {"final": "2026-09-30"}}, as_of="2026-09-30"
@@ -145,7 +160,7 @@ def test_transfer_creates_separate_assignment_and_requires_month_end_npv(panel, 
         "sov_type": "Вехи от NPV",
     }
     apply(panel, csv_source(tmp_path, "Перевод.csv", [old, new]))
-    assignments = [a for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001"]
+    assignments = [a for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"]
     assert len(assignments) == 2 and len({a["id"] for a in assignments}) == 2
     previous = next(a for a in assignments if a["category"] == "РУПК")
     current = next(a for a in assignments if a["category"] == "КУПК")
@@ -230,7 +245,9 @@ def test_registry_editions_apply_to_engine_scenario_and_snapshot(panel, tmp_path
     calculation = panel.calculate("2026-Q3")
     assert calculation.params.edition == "Условная редакция"
     assert all(r["edition"] == "Условная редакция" for r in calculation.entries)
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"
+    )
     simulation = panel.simulate(identifier, {}, as_of="2026-09-30")
     assert simulation["baseline"]["edition"] == "Условная редакция"
     panel.close(calculation)
@@ -252,7 +269,9 @@ def test_registry_editions_apply_to_engine_scenario_and_snapshot(panel, tmp_path
 def test_closed_parts_are_not_paid_twice_when_probation_sources_change(panel, tmp_path):  # noqa: F811
     fix_sources(panel, tmp_path)
     panel.close(panel.calculate("2026-Q3"))
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"
+    )
     hr = sample_row("hr_employees.csv")
     hr.update(probation_end="2026-10-31", probation_result="пройден")
     apply(panel, csv_source(tmp_path, "Новое окончание ИС.csv", [hr]))
@@ -294,7 +313,9 @@ def test_correction_only_in_next_open_quarter_does_not_change_original(panel, tm
     panel.close(panel.calculate("2026-Q3"))
     original = panel.closed("2026-Q3")
     export = payroll(original)
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"
+    )
     payload = {
         "snapshot_id": original["id"],
         "quarter": "2026-Q4",

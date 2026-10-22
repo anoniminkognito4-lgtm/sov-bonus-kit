@@ -249,15 +249,18 @@ def test_legacy_milestone_headers_use_existing_composite_keys(loaded_registry, t
     workbook.close()
     preview = prepare_upload(loaded_registry, path)
     assert not preview.errors and not preview.unmatched
-    assert preview.warnings
-    assert not preview.changes
+    assert {"MS_NO_CODES", "MS_NO_CLOSE_COLUMN"} <= {p["code"] for p in preview.problems}
+    # Вехи найдены по проекту, очереди, этапу и наименованию: добавляются только связи ключей.
+    assert preview.changes and {c["table"] for c in preview.changes} == {"milestone_key"}
+    apply_preview(loaded_registry, preview)
+    assert not prepare_upload(loaded_registry, path).changes
 
 
 def test_quarter_npv_and_bs_are_used_for_each_milestone(loaded_registry):
     from sov.engine.calculate import calculate_case
 
     adapter = RegistryAdapter(loaded_registry)
-    assignment = adapter.one("assignment", tab_no="T0002")
+    assignment = adapter.one("assignment", person_id="T0002")
     baseline = calculate_case(adapter.build_case(assignment["id"]))["employees"][0]
     for row in adapter.state["npv"]:
         if row["project_code"] == "TP-T02" and row["quarter"] == "2025-Q3":
@@ -267,7 +270,7 @@ def test_quarter_npv_and_bs_are_used_for_each_milestone(loaded_registry):
         baseline["milestones"][1]["amount"] * 1.2
     )
     assert changed["milestones"][0]["amount"] == baseline["milestones"][0]["amount"]
-    assignment = adapter.one("assignment", tab_no="T0017")
+    assignment = adapter.one("assignment", person_id="T0017")
     baseline = calculate_case(adapter.build_case(assignment["id"]))["employees"][0]
     for row in adapter.state["bs_share"]:
         if row["project_code"] == "TP-T10b" and row["quarter"] == "2025-Q2":

@@ -5,6 +5,8 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
+from sov.adapters.load import LoadPlanner, department_block
+from sov.adapters.positions import PositionBook, resolve
 from sov.engine.calculate import calculate_case
 from sov.engine.params import DEFAULT_PARAMS
 from sov.engine.rules.kpi import milestone_kpis, quarter, quarter_add  # noqa: F401
@@ -22,6 +24,44 @@ class RegistryAdapter:
             with registry.engine.connect() as current:
                 self.state = registry.domain_state(current)
                 self.closed = [json.loads(v) for v in current.scalars(select(snapshot.c.data_json))]
+        self.loads = LoadPlanner(self)
+        self._book = None
+
+    def position_book(self):
+        if self._book is None:
+            projects = [p["name"] for p in self.state["project"]]
+            projects += [p["project_code"] for p in self.state["project"]]
+            self._book = PositionBook(
+                self.state.get("position_ref", []), self.state.get("position_fix", []), projects
+            )
+        return self._book
+
+    def resolve_assignment(self, assignment, employee, block=None):
+        """Назначение с должностью справочника, категорией и видом СОВ; коды проблем.
+
+        Распознавание нужно только блокам с таблицей загрузки (ДРП, БПСК, БС);
+        пустой справочник — прежнее поведение (D-098).
+        """
+        raw = employee["position"] or assignment["position"]
+        book = self.position_book()
+        if not (book and block):
+            return resolve(assignment, raw, None), set()
+        found = book.recognize(raw, block)
+        codes = set() if found["ref"] else {"POSITION_UNRECOGNIZED"}
+        return resolve(assignment, raw, found["ref"]), codes
+
+    @staticmethod
+    def leave_issues(assignment, employee):
+        """Вопросы об уходе по признакам выгрузки УП ШР (D-103); пусто — не из УП ШР."""
+        issues = []
+        left, dismissed = assignment.get("left_1c"), assignment.get("dismissed_1c")
+        if left == 1 and not assignment["end_reason"]:
+            issues.append(("LEAVE_DATE_MISSING", True))
+        if left == 0 and not dismissed and assignment["end_reason"]:
+            issues.append(("LEAVE_ACTIVE_IN_1C", False))
+        if dismissed == 1 and not employee["dismissal_date"]:
+            issues.append(("DISMISSAL_DATE_MISSING", True))
+        return issues
 
     def rows(self, table, **fields):
         return [r for r in self.state[table] if all(r.get(k) == v for k, v in fields.items())]
@@ -41,17 +81,25 @@ class RegistryAdapter:
         # СОВ, слайд 23: текущий NPV с прогнозными ПАУР.
         return rows[0]["npv_forecast_paur"]
 
+    def status_aliases(self):
+        """Решения status_alias: значение статуса 1С → assigned / done / inactive."""
+        result = {}
+        rows = [r for r in self.state["manual_decision"] if r["kind"] == "status_alias"]
+        for row in sorted(rows, key=lambda r: r["created_at"]):
+            payload = json.loads(row["payload_json"])
+            result[payload["raw"]] = payload["status"]
+        return result
+
     def bs_share(self, code, period):
         rows = self.rows("bs_share", project_code=code, quarter=period)
         return rows[0]["share_transferred"] if rows else None
 
-    def periods(self, assignment, employee, end, extend=False):
-        loads = sorted(
-            self.rows("assignment_load", assignment_id=assignment["id"]),
-            key=lambda r: r["date_from"],
-        )
+    def periods(self, assignment, employee, end, extend=False, loads=None):
+        if loads is None:
+            loads = self.rows("assignment_load", assignment_id=assignment["id"])
+        loads = sorted(loads, key=lambda r: r["date_from"])
         bgbs = sorted(
-            self.rows("bgb_period", tab_no=employee["tab_no"]), key=lambda r: r["date_from"]
+            self.rows("bgb_period", person_id=employee["person_id"]), key=lambda r: r["date_from"]
         )
         leave = assignment["date_to"] if assignment["end_reason"] else None
         if extend and not leave and bgbs:
@@ -82,18 +130,45 @@ class RegistryAdapter:
         code, queue, stage_number = (assignment[k] for k in ("project_code", "queue", "stage"))
         project = self.one("project", project_code=code, queue=queue)
         stage = self.one("stage", project_code=code, queue=queue, stage=stage_number)
-        employee = self.one("employee", tab_no=assignment["tab_no"])
-        source_ms = self.rows("milestone", project_code=code, queue=queue, stage=stage_number)
+        employee = self.one("employee", person_id=assignment["person_id"])
+        resolved, _ = self.resolve_assignment(
+            assignment, employee, department_block(employee["department"], self.params)
+        )
+        fixed = [
+            r["milestone_code"]
+            for r in sorted(
+                self.rows("calc_milestone", project_code=code, queue=queue, stage=stage_number),
+                key=lambda r: r["order"],
+            )
+            if r["active"]
+        ]
+        if fixed:
+            # Набор вех калькулятора зафиксирован при создании (NEW_CALC §4.3); даты — из хранилища.
+            codes = {m["milestone_code"]: m for m in self.state["milestone"]}
+            source_ms = [codes[c] for c in fixed if c in codes]
+        else:
+            source_ms = self.rows("milestone", project_code=code, queue=queue, stage=stage_number)
         milestones, final, individual = [], None, {}
+        excluded_ms = []
         extend = False
         excluded = any(
             v in (assignment["position"] or "").lower()
             for v in ("вице-президент", "директор", "начальник отдела")
         )
+        aliases = self.status_aliases()
         for source in source_ms:
+            status = source["status"]
+            unknown = bool(status) and status not in self.params.milestone_statuses
+            if unknown and aliases.get(status) == "inactive":
+                continue  # решение «снята»: вехи нет, веса пересчитываются
+            if unknown and aliases.get(status) not in ("assigned", "done"):
+                # Неизвестный статус 1С: веха остаётся в весах, но не платится до решения.
+                excluded_ms.append({"name": source["name"], "status": status})
             plans = self.rows("milestone_plan_version", milestone_code=source["milestone_code"])
             chosen = min if excluded else max
             plan = chosen(plans, key=lambda r: r["version"])["plan_date"] if plans else None
+            if plan is None and not source["is_key"]:
+                continue  # MS_NO_PLAN_DATE: без плана веха не участвует в расчёте
             if len(plans) > 1 and plan > min(r["plan_date"] for r in plans):
                 extend = True
             milestone = {
@@ -103,6 +178,8 @@ class RegistryAdapter:
                 "fact": source["fact_date"],
                 "closed_1c": source["closed_1c_date"],
             }
+            if any(item["name"] == source["name"] for item in excluded_ms):
+                milestone["status_unknown"] = True
             if source["is_key"]:
                 if final is not None:
                     raise ValueError("У этапа несколько ключевых вех")
@@ -111,7 +188,7 @@ class RegistryAdapter:
                 milestones.append(milestone)
             for individual_row in self.rows(
                 "individual_date",
-                tab_no=employee["tab_no"],
+                person_id=employee["person_id"],
                 milestone_code=source["milestone_code"],
             ):
                 individual["final" if source["is_key"] else source["name"]] = individual_row[
@@ -139,7 +216,9 @@ class RegistryAdapter:
         }
         current_npv = next((v for v in npvs.values() if v is not None), None)
         starts = self.rows("start_npv", assignment_id=identifier)
-        kpi_rows = {r["quarter"]: r["kpi"] for r in self.rows("kpi", tab_no=employee["tab_no"])}
+        kpi_rows = {
+            r["quarter"]: r["kpi"] for r in self.rows("kpi", person_id=employee["person_id"])
+        }
         kpis = milestone_kpis(milestones, kpi_rows)
         checkpoint_base = final["fact"] or final["plan"] or end
         checkpoint_dates = [
@@ -149,14 +228,23 @@ class RegistryAdapter:
             ).isoformat()
             for index in (1, 2)
         ]
+        load_rows, load_source, load_issues = self.loads.for_assignment(assignment, employee)
+        load_issues = [*load_issues, *self.leave_issues(assignment, employee)]
         person = {
-            "tab_no": employee["tab_no"],
+            "tab_no": employee["person_id"],  # поле движка: идентификатор сотрудника
             "fio": employee["fio"],
             "position": assignment["position"],
-            "category": assignment["category"],
+            "category": resolved["category"],
             "role": assignment["role"],
             "start": assignment["date_from"],
-            "periods": self.periods(assignment, employee, end, extend),
+            "periods": self.periods(assignment, employee, end, extend, load_rows),
+            "load_source": load_source,
+            "load_issues": [{"code": c, "blocking": b} for c, b in load_issues],
+            "load_hint": (
+                self.loads.file_hint(assignment, load_rows)
+                if any(c == "LOAD_FILE_HINT" for c, _ in load_issues)
+                else []
+            ),
             "leave_date": leave,
             "hr_dismissal_date": employee["dismissal_date"],
             "npv_start": starts[0]["npv_start"] if starts else None,
@@ -172,7 +260,7 @@ class RegistryAdapter:
             "kpi_quarterly": kpi_rows,
             "probation_end": employee["probation_end"],
             "probation_result": employee["probation_result"],
-            "legacy_sov": assignment["sov_type"]
+            "legacy_sov": resolved["sov_type"]
             not in ("Вехи", "Вехи от NPV", "Вехи от KPI", "вр. KPI (Вехи)"),
         }
         frozen, frozen_payouts, frozen_interest = {}, {}, {}
@@ -245,6 +333,19 @@ class RegistryAdapter:
                 npv_stage_end=self.npv(code, final_quarter),
             )
         expenses = self.rows("stage5_expense", project_code=code, queue=queue, stage=stage_number)
+        changed_set = any(
+            json.loads(r["payload_json"]).get("calc") == f"{code}/{queue}/{stage_number}"
+            for r in self.state["manual_decision"]
+            if r["kind"] == "calc_set_change"
+        )
+        stage_ids = {
+            a["id"]
+            for a in self.rows("assignment", project_code=code, queue=queue, stage=stage_number)
+        }
+        # NEW_CALC §4.3: набор изменён после начислений — до правила переноса вех ручной расчёт.
+        set_changed_after_accrual = changed_set and any(
+            r["assignment_id"] in stage_ids for r in self.state["accrual"]
+        )
         bs_enabled = "БС" in (project["blocks"] or "")
         case = {
             "id": identifier,
@@ -252,7 +353,7 @@ class RegistryAdapter:
             "project_code": code,
             "queue": queue,
             "stage": stage_number,
-            "is_exception": bool(project["is_exception"]),
+            "is_exception": bool(project["is_exception"]) or set_changed_after_accrual,
             "handover_date": project["handover_date"],
             "sale": {
                 "date": project["sale_date"],
@@ -269,12 +370,15 @@ class RegistryAdapter:
                 for m in milestones
             },
             "milestones": milestones,
+            "unknown_status_milestones": excluded_ms,
             "final": final,
             "employees": [person],
             "key_rate_history": [
                 {"date_from": r["date_from"], "rate": r["rate"]} for r in self.state["key_rate"]
             ],
-            "holidays": [r["date"] for r in self.state["holiday"]],
+            # Производственный календарь: «рабочий» — перенесённый рабочий день в выходной.
+            "holidays": [r["date"] for r in self.state["holiday"] if r["kind"] != "рабочий"],
+            "workdays": [r["date"] for r in self.state["holiday"] if r["kind"] == "рабочий"],
             "stage5_expense": (
                 {
                     "remaining": bool(expenses[0]["expense_remaining"]),
@@ -298,7 +402,9 @@ class RegistryAdapter:
         combined = {}
         for row in mapping:
             assignments = self.rows(
-                "assignment", tab_no=row["tab_no"], project_code=row["project_code"]
+                "assignment",
+                person_id=row.get("person_id") or row["tab_no"],  # в карте кейсов — tab_no
+                project_code=row["project_code"],
             )
             if len(assignments) != 1:
                 raise ValueError("Карта кейсов неоднозначна: ожидается одно назначение")

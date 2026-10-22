@@ -11,7 +11,7 @@ from sov.engine.rules.kpi import quarter_end
 def render_redistribution(service, quarter):
     with st.expander("Групповое перераспределение ±30%"):
         assignments = service.registry.rows("assignment")
-        people = {r["tab_no"]: r for r in service.registry.rows("employee")}
+        people = {r["person_id"]: r for r in service.registry.rows("employee")}
         scopes = sorted(
             {
                 (a["project_code"], a["queue"], a["stage"])
@@ -33,7 +33,7 @@ def render_redistribution(service, quarter):
             for a in assignments
             if (a["project_code"], a["queue"], a["stage"]) == scope and a["category"] == "РУПК"
         ]
-        if len({a["tab_no"] for a in team}) < 2:
+        if len({a["person_id"] for a in team}) < 2:
             st.info("В этом проекте только один РУПК: перераспределение запрещено.")
             return
         milestones = [
@@ -47,6 +47,7 @@ def render_redistribution(service, quarter):
             "Вехи письма",
             [m["name"] for m in milestones],
             default=[milestones[0]["name"]],
+            placeholder="Выберите вехи",
             key="rd_ms",
         )
         if not names:
@@ -71,8 +72,8 @@ def render_redistribution(service, quarter):
             [
                 {
                     "ID": a["id"],
-                    "Сотрудник": f"{a['tab_no']} · {people[a['tab_no']]['fio']}",
-                    "ФП": people[a["tab_no"]]["department"],
+                    "Сотрудник": f"{a['person_id']} · {people[a['person_id']]['fio']}",
+                    "ФП": people[a["person_id"]]["department"],
                     "Веха": name,
                     "Изменение, %": current.get((a["id"], name), 0) * 100,
                 }
@@ -107,7 +108,7 @@ def render_redistribution(service, quarter):
                         "pct": row["Изменение, %"] / 100,
                     }
                     for row in edited
-                    if next(a["tab_no"] for a in team if a["id"] == row["ID"]) != leader
+                    if next(a["person_id"] for a in team if a["id"] == row["ID"]) != leader
                     or row["Изменение, %"]
                 ]
                 service.save_redistribution(rows, leader, approved.isoformat(), basis, file_ref)

@@ -31,7 +31,7 @@ def panel(tmp_path):
 def fix_sources(panel, tmp_path):
     for path in corrected_sources(tmp_path):
         panel.apply(panel.preview(path))
-    assignment = next(a for a in panel.registry.rows("assignment") if a["tab_no"] == "T0039")
+    assignment = next(a for a in panel.registry.rows("assignment") if a["person_id"] == "T0039")
     panel.save_decision(
         "early_stage",
         assignment["id"],
@@ -120,7 +120,7 @@ def test_manual_decision_requires_basis_and_explicit_approval(panel):
 
 
 def test_outside_session_recomputes_interest(panel):
-    assignment = next(a for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    assignment = next(a for a in panel.registry.rows("assignment") if a["person_id"] == "T0001")
     before = panel.calculate("2026-Q3", [assignment["id"]]).results[assignment["id"]]["result"][
         "employees"
     ][0]
@@ -162,7 +162,7 @@ def test_view_and_export_actions_are_audited(panel):
 
 def test_amount_change_control_compares_same_quarter(panel):
     before = panel.calculate("2026-Q3")
-    assignment = next(a for a in panel.registry.rows("assignment") if a["tab_no"] == "T0002")
+    assignment = next(a for a in panel.registry.rows("assignment") if a["person_id"] == "T0002")
     panel.save_decision(
         "start_npv",
         assignment["id"],
@@ -197,7 +197,7 @@ def test_close_is_atomic_on_storage_error(panel, tmp_path, monkeypatch):
 
 
 def test_expense_decision_applies_to_project_stage(panel):
-    assignment = next(a for a in panel.registry.rows("assignment") if a["tab_no"] == "T0037")
+    assignment = next(a for a in panel.registry.rows("assignment") if a["person_id"] == "T0037")
     panel.save_decision(
         "stage5_expense",
         assignment["id"],

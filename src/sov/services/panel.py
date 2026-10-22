@@ -27,7 +27,7 @@ ADMIN = "Группа СОВ"
 class Actor:
     name: str
     role: str = ADMIN
-    tab_no: str | None = None
+    person_id: str | None = None
     projects: tuple = ()
     staff: tuple = ()
 
@@ -45,6 +45,9 @@ class Calculation:
     @property
     def blocking(self):
         return [p for p in self.problems if p["blocking"]]
+
+
+ALWAYS_SHOWN = {"LEAVE_DATE_MISSING", "LEAVE_ACTIVE_IN_1C", "DISMISSAL_DATE_MISSING"}
 
 
 def require_admin(actor):
@@ -86,9 +89,9 @@ class PanelService:
     def __init__(self, registry, actor):
         self.registry, self.actor = registry, actor
 
-    def preview(self, path):
+    def preview(self, path, options=None):
         require_admin(self.actor)
-        return prepare_upload(self.registry, path, self.actor.name)
+        return prepare_upload(self.registry, path, self.actor.name, options)
 
     def apply(self, preview):
         require_admin(self.actor)
@@ -159,7 +162,7 @@ class PanelService:
                 self.registry.rows("sov_param", connection), quarter(approved_date)
             )
             adapter = RegistryAdapter(self.registry, connection, params)
-            adapter.one("employee", tab_no=leader)
+            adapter.one("employee", person_id=leader)
             enriched = []
             for row in rows:
                 if not isfinite(row["pct"]):
@@ -181,7 +184,7 @@ class PanelService:
                 {
                     "id": identifier,
                     "kind": "redistribution_batch",
-                    "tab_no": leader,
+                    "person_id": leader,
                     "payload_json": json_text({"rows": enriched}),
                     "basis": basis.strip(),
                     "file_ref": file_ref.strip(),
@@ -335,7 +338,7 @@ class PanelService:
                 {
                     "id": identifier,
                     "kind": kind,
-                    "tab_no": assignment["tab_no"],
+                    "person_id": assignment["person_id"],
                     "payload_json": json_text(payload),
                     "basis": basis.strip(),
                     "file_ref": file_ref.strip(),
@@ -347,6 +350,384 @@ class PanelService:
             )
             self.registry.bump_revision(connection)
             return identifier
+
+    STATUS_MEANINGS = {"assigned": "Назначена", "done": "Выполнена", "inactive": "снята"}
+
+    def save_status_alias(self, raw, status, basis, file_ref):
+        """Решение status_alias (MILESTONES §8): что значит статус вехи из 1С."""
+        require_admin(self.actor)
+        raw = (raw or "").strip()
+        if not raw:
+            raise ValueError("Укажите значение статуса из 1С")
+        if status not in self.STATUS_MEANINGS:
+            raise ValueError("Смысл статуса: assigned, done или inactive")
+        if not basis.strip() or not file_ref.strip():
+            raise ValueError("Укажите основание и ссылку на подтверждающий файл")
+        with self.registry.transaction() as connection:
+            identifier = str(uuid4())
+            _domain_insert(
+                connection,
+                "manual_decision",
+                {
+                    "id": identifier,
+                    "kind": "status_alias",
+                    "person_id": None,
+                    "payload_json": json_text({"raw": raw, "status": status}),
+                    "basis": basis.strip(),
+                    "file_ref": file_ref.strip(),
+                    "author": self.actor.name,
+                },
+                timestamp(),
+                self.actor,
+                basis,
+            )
+            self.registry.bump_revision(connection)
+            return identifier
+
+    MILESTONE_DECISIONS = {
+        # MILESTONES §8 и справочники соответствий RASST §4.2.
+        "milestone_inactive": ("milestone_code",),
+        "milestone_rename": ("milestone_code", "new_name"),
+        "plan_move_basis": ("milestone_code", "version", "basis"),
+        "fact_change_accept": ("milestone_code", "fact"),
+        "project_alias": ("from", "to"),
+        "queue_alias": ("project_code", "code_raw", "queue"),
+    }
+
+    def save_milestone_decision(self, kind, payload, basis, file_ref):
+        """Решение по вехам или справочнику соответствий; действует на следующие загрузки."""
+        require_admin(self.actor)
+        if kind not in self.MILESTONE_DECISIONS:
+            raise ValueError("Неизвестный вид решения по вехам")
+        missing = [k for k in self.MILESTONE_DECISIONS[kind] if k not in payload]
+        if missing:
+            raise ValueError(f"Не заполнено: {', '.join(missing)}")
+        if not basis.strip() or not file_ref.strip():
+            raise ValueError("Укажите основание и ссылку на подтверждающий файл")
+        codes = {r["milestone_code"] for r in self.registry.rows("milestone")}
+        if "milestone_code" in payload and payload["milestone_code"] not in codes:
+            raise ValueError("Веха не найдена в хранилище")
+        if kind == "fact_change_accept" and payload["fact"] is not None:
+            from datetime import date
+
+            date.fromisoformat(payload["fact"])
+        if kind == "project_alias" and payload["to"] not in {
+            r["project_code"] for r in self.registry.rows("project")
+        }:
+            raise ValueError("Проект реестра не найден")
+        with self.registry.transaction() as connection:
+            identifier = str(uuid4())
+            _domain_insert(
+                connection,
+                "manual_decision",
+                {
+                    "id": identifier,
+                    "kind": kind,
+                    "person_id": None,
+                    "payload_json": json_text(dict(payload)),
+                    "basis": basis.strip(),
+                    "file_ref": file_ref.strip(),
+                    "author": self.actor.name,
+                },
+                timestamp(),
+                self.actor,
+                basis,
+            )
+            self.registry.bump_revision(connection)
+            return identifier
+
+    # --- Новый калькулятор (NEW_CALC) ---
+
+    def new_calc_draft(self, project, queue, stage):
+        """Отбор вех, шапка по умолчанию и предложения по команде для экрана."""
+        require_admin(self.actor)
+        from sov.services import new_calc
+
+        store = new_calc.Store(self.registry.rows)
+        header = new_calc.default_header(store, project, queue, stage)
+        return {
+            "selection": new_calc.select_milestones(store, project, queue, stage),
+            "header": header,
+            "team": new_calc.team_proposals(
+                self.registry.rows, store, project, queue, stage, header["start_date"]
+            ),
+            "store": store,
+        }
+
+    def create_calculator(self, project, queue, stage, header, team):
+        """Этап, набор вех и назначения — одной операцией с журналом и откатом."""
+        require_admin(self.actor)
+        from sov.loaders.service import apply_records
+        from sov.services import new_calc
+
+        store = new_calc.Store(self.registry.rows)
+        records, _ = new_calc.build_records(
+            self.registry.rows, store, project, queue, stage, header, team, self.actor.name
+        )
+        return apply_records(
+            self.registry,
+            records,
+            f"Новый калькулятор {project}/{queue}/{stage}",
+            self.actor.name,
+            "new_calc",
+        )
+
+    def _records(self, records, label, kind):
+        from sov.loaders.service import apply_records
+
+        return apply_records(self.registry, records, label, self.actor.name, kind)
+
+    def person_merge(self, question, person_id, basis):
+        """Тот же человек (перевод, смена фамилии): ФИО и подразделение → person_id (D-101)."""
+        require_admin(self.actor)
+        from sov.loaders import persons
+
+        if not basis.strip():
+            raise ValueError("Укажите основание")
+        if not any(e["person_id"] == person_id for e in self.registry.rows("employee")):
+            raise ValueError("Сотрудник не найден")
+        record = (
+            "person_alias",
+            {
+                "fio": persons.norm(question["fio"]),
+                "department": persons.norm(question.get("department")),
+                "person_id": person_id,
+                "kind": "merge",
+                "basis": basis.strip(),
+            },
+        )
+        return self._records(
+            [record], f"Тот же человек: {question['fio']} → {person_id}. {basis}", "person_merge"
+        )
+
+    def person_split(self, question, basis):
+        """Разные люди: заводится новый сотрудник со своим номером (D-101)."""
+        require_admin(self.actor)
+        from sov.loaders import persons
+
+        if not basis.strip():
+            raise ValueError("Укажите основание")
+        state = {
+            "employee": self.registry.rows("employee"),
+            "person_alias": self.registry.rows("person_alias"),
+        }
+        person_id = persons.next_person_id(state)
+        records = [
+            (
+                "employee",
+                {
+                    "person_id": person_id,
+                    "fio": persons.clean(question["fio"]),
+                    "department": persons.clean(question.get("department")) or None,
+                    "position": persons.clean(question.get("position")) or None,
+                },
+            ),
+            (
+                "person_alias",
+                {
+                    "fio": persons.norm(question["fio"]),
+                    "department": persons.norm(question.get("department")),
+                    "person_id": person_id,
+                    "kind": "split",
+                    "basis": basis.strip(),
+                },
+            ),
+        ]
+        report = self._records(
+            records, f"Другой человек: {question['fio']} → {person_id}. {basis}", "person_split"
+        )
+        return {**report, "person_id": person_id}
+
+    def position_questions(self):
+        """Должности, не распознанные справочником: вопросы Группе СОВ (D-098)."""
+        from sov.services import team
+
+        return team.position_questions(self.registry.rows, DEFAULT_PARAMS)
+
+    def save_positions(self, edited, basis):
+        """Правка справочника должностей в панели: журнал и откат как у загрузки."""
+        require_admin(self.actor)
+        from sov.services import team
+
+        if not basis.strip():
+            raise ValueError("Укажите основание правки")
+        return self._records(
+            team.directory_records(edited), f"Справочник должностей: {basis}", "position_ref"
+        )
+
+    def save_position_fixes(self, edited, basis):
+        require_admin(self.actor)
+        from sov.services import team
+
+        if not basis.strip():
+            raise ValueError("Укажите основание правки")
+        return self._records(
+            team.fix_records(edited), f"Исправления должностей: {basis}", "position_fix"
+        )
+
+    def lc_skb(self, project, queue, on_date):
+        from sov.services import team
+
+        return team.lc_skb_state(self.registry.rows, project, queue, on_date)
+
+    def set_lc_skb(self, project, queue, flag, date_from, basis):
+        """Флажок «ЛЦ или объект СКБ» очереди с даты (D-099)."""
+        require_admin(self.actor)
+        from sov.services import team
+
+        record = team.lc_skb_record(project, queue, flag, date_from, basis)
+        action = "отмечена" if flag else "снята отметка"
+        return self._records(
+            [record],
+            f"ЛЦ/СКБ {project}/{queue}: {action} с {date_from}. {basis.strip()}",
+            "project_flag",
+        )
+
+    def team_defaults(self, department, position):
+        from sov.services import team
+
+        return team.defaults(self.registry.rows, DEFAULT_PARAMS, department, position)
+
+    def add_to_team(self, form):
+        """«Добавить в команду»: назначение с датой прихода, журнал и откат (D-100)."""
+        require_admin(self.actor)
+        from sov.services import team
+
+        records, identity = team.add_records(self.registry.rows, DEFAULT_PARAMS, form)
+        person = next(data["person_id"] for table, data in records if table == "assignment")
+        report = self._records(
+            records,
+            f"Добавлен в команду {person} → {form['project_code']}/{form['queue']}"
+            f"/{form['stage']} с {form['date_from']}. {form['basis'].strip()}",
+            "team_add",
+        )
+        return {**report, "assignment_id": identity}
+
+    def remove_from_team(self, identifier, date_to, end_reason, basis):
+        """«Убрать с проекта»: назначение закрывается датой и причиной, не удаляется."""
+        require_admin(self.actor)
+        from sov.services import team
+
+        if not basis.strip():
+            raise ValueError("Укажите основание")
+        record = team.remove_record(self.registry.rows, identifier, date_to, end_reason)
+        data = record[1]
+        return self._records(
+            [record],
+            f"Убран с проекта {data['person_id']} ← {data['project_code']}/{data['queue']}"
+            f"/{data['stage']}: {end_reason} {date_to}. {basis.strip()}",
+            "team_remove",
+        )
+
+    def save_calc_set_change(self, payload, basis, file_ref):
+        """Решение calc_set_change: изменить зафиксированный набор вех калькулятора."""
+        require_admin(self.actor)
+        from sov.loaders.service import apply_records
+        from sov.services import new_calc
+
+        if not basis.strip() or not file_ref.strip():
+            raise ValueError("Укажите основание и ссылку на подтверждающий файл")
+        store = new_calc.Store(self.registry.rows)
+        records = new_calc.set_change_records(store, payload)
+        with self.registry.transaction() as connection:
+            _domain_insert(
+                connection,
+                "manual_decision",
+                {
+                    "id": str(uuid4()),
+                    "kind": "calc_set_change",
+                    "person_id": None,
+                    "payload_json": json_text(dict(payload)),
+                    "basis": basis.strip(),
+                    "file_ref": file_ref.strip(),
+                    "author": self.actor.name,
+                },
+                timestamp(),
+                self.actor,
+                basis,
+            )
+            self.registry.bump_revision(connection)
+        return apply_records(
+            self.registry,
+            records,
+            f"Набор вех {payload['calc']}",
+            self.actor.name,
+            "calc_set_change",
+        )
+
+    def calc_file_settings(self):
+        """Настройки файла для параллельного расчёта: рядом с базой, не в git."""
+        from sov.services import new_calc
+
+        path = self.registry.path.parent / "settings" / "new_calc.json"
+        if path.exists():
+            return {**new_calc.DEFAULT_SETTINGS, **json.loads(path.read_text(encoding="utf-8"))}
+        return json.loads(json.dumps(new_calc.DEFAULT_SETTINGS))
+
+    def save_calc_file_settings(self, settings):
+        require_admin(self.actor)
+        path = self.registry.path.parent / "settings" / "new_calc.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def export_calc_file(self, project, queue, stage, template, folder, name_pattern, header=None):
+        """Файл калькулятора из копии шаблона (NEW_CALC §7); шаблон не меняется."""
+        require_admin(self.actor)
+        import re
+        from pathlib import Path
+
+        from sov.exports.calc_file import write_calculator_file
+        from sov.registry.models import milestone_raw_row
+        from sov.services import new_calc
+
+        store = new_calc.Store(self.registry.rows)
+        project_row = next(r for r in self.registry.rows("project") if r["project_code"] == project)
+        with self.registry.engine.connect() as connection:
+            raw = connection.execute(
+                select(
+                    milestone_raw_row.c.upload_id,
+                    milestone_raw_row.c.row_no,
+                    milestone_raw_row.c.raw_json,
+                    upload.c.applied_at,
+                )
+                .join(upload, upload.c.id == milestone_raw_row.c.upload_id)
+                .where(upload.c.rolled_back_at.is_(None))
+                .order_by(upload.c.applied_at.desc(), milestone_raw_row.c.row_no)
+            ).all()
+        raw_rows = [(r.upload_id, r.row_no, json.loads(r.raw_json)) for r in raw]
+        data = new_calc.calc_file_data(store, project_row, queue, stage, raw_rows, header)
+        template = Path(template)
+        name = name_pattern.format(project=project, queue=queue or "-", stage=stage)
+        name = re.sub(r'[\\/:*?"<>|]+', "_", name) + template.suffix
+        report = write_calculator_file(template, Path(folder) / name, data)
+        with self.registry.transaction() as connection:
+            _audit(
+                connection,
+                self.actor.name,
+                timestamp(),
+                "calc_file",
+                f"{project}/{queue}/{stage}",
+                None,
+                {
+                    "file": report["file"],
+                    "template": str(template),
+                    "status": report["status"],
+                    "written": report["written"],
+                    "overflow": report["overflow"],
+                    "problems": [p["code"] for p in report["problems"]],
+                    "check": report["check"],
+                },
+                "Файл калькулятора для параллельного расчёта",
+            )
+        return report
+
+    def new_calc_hints(self, as_of):
+        """Подсказки «Обзора»: пора создать калькулятор, набор вех изменился."""
+        require_admin(self.actor)
+        from sov.services import new_calc
+
+        store = new_calc.Store(self.registry.rows)
+        return new_calc.stage_due(store, as_of) + new_calc.set_changes(store)
 
     def _case_with_decisions(self, adapter, identifier):
         case = adapter.build_case(identifier)
@@ -411,7 +792,7 @@ class PanelService:
             employee = result["employees"][0]
             _decision_problems(result, decisions)
             source = adapter.one("assignment", id=identifier)
-            hr = adapter.one("employee", tab_no=source["tab_no"])
+            hr = adapter.one("employee", person_id=source["person_id"])
             project = adapter.one(
                 "project", project_code=source["project_code"], queue=source["queue"]
             )
@@ -428,10 +809,21 @@ class PanelService:
                 for m in employee["milestones"]
             )
             relevant |= not case["final"].get("plan") and bool(result["problems"])
-            if relevant:
+            # Вопросы об уходе видны всегда, даже без событий в квартале (D-103).
+            shown = (
+                result["problems"]
+                if relevant
+                else [p for p in result["problems"] if p["code"] in ALWAYS_SHOWN]
+            )
+            if shown:
                 problems.extend(
-                    {**p, "assignment_id": identifier, "project_code": source["project_code"]}
-                    for p in result["problems"]
+                    {
+                        **{k: v for k, v in p.items() if k != "tab_no"},
+                        "person_id": p.get("tab_no"),  # движок называет сотрудника tab_no
+                        "assignment_id": identifier,
+                        "project_code": source["project_code"],
+                    }
+                    for p in shown
                 )
             for item in employee["milestones"]:
                 event = item.get("recognition_date") or source_ms[item["name"]].get("closed_1c")
@@ -515,7 +907,7 @@ class PanelService:
                     {
                         "code": "FM_NOT_APPROVED",
                         "blocking": True,
-                        "tab_no": entry["tab_no"],
+                        "person_id": entry["person_id"],
                         "assignment_id": entry["assignment_id"],
                         "project_code": entry["project_code"],
                         "message": "ФМ квартала не утверждена ФЮБ",
@@ -536,7 +928,7 @@ class PanelService:
                     problem = {
                         "code": "AMOUNT_CHANGE_10PCT",
                         "blocking": False,
-                        "tab_no": source["tab_no"],
+                        "person_id": source["person_id"],
                         "assignment_id": identifier,
                         "project_code": source["project_code"],
                         "message": (
@@ -591,7 +983,7 @@ class PanelService:
             name=milestone_name,
         )
         return {
-            "tab_no": source["tab_no"],
+            "person_id": source["person_id"],
             "fio": hr["fio"],
             "department": hr["department"],
             "project_code": source["project_code"],
@@ -633,7 +1025,7 @@ class PanelService:
                 data = {
                     k: entry[k]
                     for k in (
-                        "tab_no",
+                        "person_id",
                         "assignment_id",
                         "kind",
                         "milestone_code",

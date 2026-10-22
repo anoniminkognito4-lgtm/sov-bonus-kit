@@ -19,7 +19,7 @@ def build_context(adapter, identifier, overrides=()):
         targets = [
             a
             for a in assignments
-            if a["tab_no"] == row["tab_no"]
+            if a["person_id"] == row["person_id"]
             and (
                 not a["end_reason"]
                 or not milestone["closed_1c_date"]
@@ -30,9 +30,9 @@ def build_context(adapter, identifier, overrides=()):
         if len(targets) != 1:
             raise ValueError("Перераспределение: назначение сотрудника неоднозначно")
         leaders = [
-            e for e in adapter.state["employee"] if row["decided_by"] in (e["tab_no"], e["fio"])
+            e for e in adapter.state["employee"] if row["decided_by"] in (e["person_id"], e["fio"])
         ]
-        leader = leaders[0]["tab_no"] if len(leaders) == 1 else None
+        leader = leaders[0]["person_id"] if len(leaders) == 1 else None
         key = (targets[0]["id"], milestone["name"])
         changes[key] = {**row, "assignment_id": key[0], "milestone": key[1], "decided_by": leader}
     for decision in sorted(adapter.state["manual_decision"], key=lambda r: r["created_at"]):
@@ -51,12 +51,12 @@ def build_context(adapter, identifier, overrides=()):
     members = []
     for assignment in assignments:
         case = adapter.build_case(assignment["id"], include_redistribution=False)
-        employee = adapter.one("employee", tab_no=assignment["tab_no"])
+        employee = adapter.one("employee", person_id=assignment["person_id"])
         members.append(
             {
                 "id": assignment["id"],
                 **scope,
-                "tab_no": assignment["tab_no"],
+                "tab_no": assignment["person_id"],  # поле движка: идентификатор сотрудника
                 "fp": employee["department"],
                 "category": assignment["category"],
                 "employee": case["employees"][0],

@@ -4,7 +4,13 @@ from copy import deepcopy
 
 from sov.engine.params import DEFAULT_PARAMS, SovParams
 from sov.engine.rules.budget import project_bonus
-from sov.engine.rules.dates import as_date, closure_date, milestone_weights, pay_date
+from sov.engine.rules.dates import (
+    as_date,
+    closure_date,
+    milestone_part,
+    milestone_weights,
+    pay_date,
+)
 from sov.engine.rules.financial import (
     CATEGORIES,
     bs_multiplier,
@@ -39,6 +45,31 @@ MESSAGES = {
     "DISMISSED_ASSIGNMENT_OPEN": "Сотрудник уволен, назначение не закрыто.",
     "MANUAL_CALC": "Случай требует ручного расчёта.",
     "MILESTONE_AFTER_FINAL_PLAN": "План промежуточной вехи позже ключевой.",
+    "MILESTONE_STATUS_UNKNOWN": "Неизвестный статус вехи в 1С: по вехе не платим до решения.",
+    "MILESTONE_PART_PLAN": "План второй части вехи приравнен к ключевой вехе этапа (РнВ).",
+    "LOAD_POSITION_UNKNOWN": "Нет загрузки по должности в таблице СОВ.",
+    "POSITION_UNRECOGNIZED": (
+        "Должность не распознана по справочнику: нужен ответ "
+        "(добавьте должность или исправление в справочник)."
+    ),
+    "POSITION_NO_LOAD": (
+        "Должность есть в справочнике, но загрузка для неё не задана: назначение неполное."
+    ),
+    "LOAD_BEFORE_TABLE": (
+        "Период до начала действия таблицы загрузки (01.07.2025): по правилам загрузки нет."
+    ),
+    "LEAVE_DATE_MISSING": "В 1С «Покинул проект», а даты ухода нет: укажите дату ухода.",
+    "LEAVE_ACTIVE_IN_1C": "В 1С человек ещё на проекте, а в реестре есть дата ухода.",
+    "DISMISSAL_DATE_MISSING": "В 1С «Уволен», а даты увольнения из кадров нет: укажите её.",
+    "LOAD_FILE_HINT": ("В файле назначений есть загрузка: только подсказка, в расчёт не берётся."),
+    "LOAD_TABLE_V2": (
+        "Таблица загрузки v2 (сл. 18) с 01.07.2026 отличается от макрокниги: "
+        "ожидаемое расхождение с Excel-калькулятором."
+    ),
+    "LOAD_FILE_DIFFERS": "Загрузка по правилам СОВ отличается от файла назначений.",
+    "RP_LOAD_OUT_OF_RANGE": "Загрузка РП вне допустимого диапазона ранга.",
+    "RP_SET_NOT_APPROVED": "Набор проектов РП не утверждён.",
+    "RP_SET_MISSING_PROJECT": "Проекта нет в наборе РП или набор заполнен не полностью.",
 }
 
 
@@ -84,6 +115,10 @@ def _has_previous_open(milestone, all_milestones):
 def _calculate_employee(case, employee, params, problems):
     result = _empty_employee(employee)
     tab_no, category = employee.get("tab_no"), employee.get("category")
+    for issue in employee.get("load_issues") or ():
+        _problem(problems, issue["code"], tab_no, issue["blocking"])
+    for excluded in case.get("unknown_status_milestones") or ():
+        _problem(problems, "MILESTONE_STATUS_UNKNOWN", tab_no, milestone=excluded["name"])
     if case.get("is_exception") or employee.get("legacy_sov"):
         _problem(problems, "MANUAL_CALC", tab_no)
         return result
@@ -154,20 +189,32 @@ def _calculate_employee(case, employee, params, problems):
         k_fin=financial,
         k_bs=bs_factor,
     )
+    parts = [milestone_part(m["name"]) for m in milestones]
+    second_part_plan = {
+        i: final_plan for i, part in enumerate(parts) if part == 2 and case["stage"] == 4
+    }
     weights = milestone_weights(
         start,
         case.get("continues_from_prev_stage", False),
         case.get("new_stage_start"),
         [m["plan"] for m in milestones],
         {
-            str(i): individual[m["name"]]
-            for i, m in enumerate(milestones)
-            if m["name"] in individual
+            **{
+                str(i): individual[m["name"]]
+                for i, m in enumerate(milestones)
+                if m["name"] in individual
+            },
+            **{str(i): plan for i, plan in second_part_plan.items()},
         },
         params,
+        parts,
     )
     for index, milestone in enumerate(milestones):
-        effective_plan = individual.get(milestone["name"], milestone["plan"])
+        effective_plan = second_part_plan.get(
+            index, individual.get(milestone["name"], milestone["plan"])
+        )
+        if index in second_part_plan and milestone["plan"] != final_plan:
+            _problem(problems, "MILESTONE_PART_PLAN", tab_no, False, milestone["name"])
         fact, closed = milestone.get("fact"), closure_date(milestone)
         item = {
             "name": milestone["name"],
@@ -175,7 +222,7 @@ def _calculate_employee(case, employee, params, problems):
             "individual_plan": individual.get(milestone["name"]),
             "fact": fact,
             "deviation_days": (as_date(effective_plan) - as_date(fact)).days if fact else None,
-            "weight": weights["weight"] if weights["participates"][index] else None,
+            "weight": weights["weights"][index],
             "amount": None,
             "pay_date": None,
             "calc_status": "не закрыта",
@@ -189,7 +236,8 @@ def _calculate_employee(case, employee, params, problems):
         if not fact or not closed:
             continue
         item["pay_date"] = case.get("manual_pay_dates", {}).get(
-            milestone["name"], pay_date(closed, case.get("holidays", ()), params)
+            milestone["name"],
+            pay_date(closed, case.get("holidays", ()), params, case.get("workdays", ())),
         )
         if leave_date and closed > leave_date:
             item.update(amount=0.0, calc_status="после ухода")
@@ -215,10 +263,11 @@ def _calculate_employee(case, employee, params, problems):
                 _problem(problems, "BS_SHARE_MISSING", tab_no, milestone=milestone["name"])
                 continue
             milestone_bs = bs_multiplier(category, True, value, params)
-        factor = milestone_factor(
-            category, item["deviation_days"], milestone_financial, kpi, params
-        )
-        item["amount"] = pb * share * weights["weight"] * milestone_bs * factor
+        deviation = item["deviation_days"]
+        if parts[index] == 2:
+            deviation = min(0, deviation)  # сл. 55 п. 19: опережение второй части не влияет
+        factor = milestone_factor(category, deviation, milestone_financial, kpi, params)
+        item["amount"] = pb * share * weights["weights"][index] * milestone_bs * factor
         item["calc_status"] = (
             "ждёт предыдущую веху" if _has_previous_open(milestone, milestones) else "рассчитано"
         )
@@ -232,8 +281,16 @@ def _calculate_employee(case, employee, params, problems):
                 item["redistribution_pct"] = pct
                 item["amount"] *= 1 + pct
         freeze_advance(employee, item)
+    for item, milestone in zip(result["milestones"], milestones, strict=True):
+        # Неизвестный статус 1С: веха в весах, сумма видна, но не платится (D-051).
+        if milestone.get("status_unknown") and item["calc_status"] != "не участвует":
+            item["calc_status"] = "требует решения"
     release_dates(case, employee, result["milestones"])
     _calculate_final(case, employee, result, final_plan, params, problems)
+    if final_input.get("status_unknown"):
+        result["final"]["calc_status"] = "требует решения"
+        for part in result["payouts"]:
+            part["calc_status"] = "требует решения"
     restrict_probation(case, employee, result)
     if handover_active(case):
         for item in result["milestones"]:
@@ -294,7 +351,7 @@ def _calculate_final(case, employee, result, final_plan, params, problems):
             raw_amount=0.0,
             calc_status="сгорело",
             k_stage=0.0,
-            pay_date=pay_date(day, case.get("holidays", ()), params),
+            pay_date=pay_date(day, case.get("holidays", ()), params, case.get("workdays", ())),
         )
         result["payouts"] = [
             {
@@ -316,12 +373,15 @@ def _calculate_final(case, employee, result, final_plan, params, problems):
     if fact and closed:
         final.update(
             k_stage=stage_factor(min(0, deviation) if leave_date else deviation, params),
-            pay_date=pay_date(closed, case.get("holidays", ()), params),
+            pay_date=pay_date(closed, case.get("holidays", ()), params, case.get("workdays", ())),
             calc_status="рассчитано",
         )
         if sale:
             final.update(
-                k_stage=1.0, pay_date=pay_date(sale["date"], case.get("holidays", ()), params)
+                k_stage=1.0,
+                pay_date=pay_date(
+                    sale["date"], case.get("holidays", ()), params, case.get("workdays", ())
+                ),
             )
         factor = result["k_fin"] if is_kupk(category) else 1
         if is_kupk(category):
