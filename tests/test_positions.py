@@ -115,15 +115,15 @@ def setup_bs(panel, position, sov_type="Вехи"):
     with panel.registry.transaction() as connection:
         connection.execute(
             update(employee)
-            .where(employee.c.tab_no == "T0001")
+            .where(employee.c.person_id == "T0001")
             .values(department="Отдел управления строительством БС", position=position)
         )
         connection.execute(
             update(assignment)
-            .where(assignment.c.tab_no == "T0001")
+            .where(assignment.c.person_id == "T0001")
             .values(position=None, sov_type=sov_type)
         )
-    return next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    return next(a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001")
 
 
 def test_samples_directory_loaded(panel):
@@ -251,7 +251,7 @@ def rows(panel, table, **fields):
 
 def team_form(**values):
     return {
-        "tab_no": "T0001",
+        "person_id": "T0001",
         "new_employee": None,
         "project_code": "TP-T02",
         "queue": "1",
@@ -270,7 +270,7 @@ def team_form(**values):
 def test_add_to_team_existing_and_new_employee(panel):
     report = panel.add_to_team(team_form())
     added = next(a for a in panel.registry.rows("assignment") if a["id"] == report["assignment_id"])
-    assert (added["tab_no"], added["project_code"], added["date_from"]) == (
+    assert (added["person_id"], added["project_code"], added["date_from"]) == (
         "T0001",
         "TP-T02",
         "2026-08-01",
@@ -283,7 +283,7 @@ def test_add_to_team_existing_and_new_employee(panel):
     # Новый сотрудник БС: категория и вид СОВ — по справочнику.
     report = panel.add_to_team(
         team_form(
-            tab_no="T9001",
+            person_id=None,
             new_employee={
                 "fio": "Тестов Новый",
                 "department": "Отдел управления строительством БС",
@@ -300,17 +300,19 @@ def test_add_to_team_existing_and_new_employee(panel):
         "Вехи",
         "Руководитель строительства",
     )
-    assert rows(panel, "employee", tab_no="T9001")[0]["fio"] == "Тестов Новый"
+    assert rows(panel, "employee", person_id="P0001")[0]["fio"] == "Тестов Новый"
     panel.rollback(report["upload_id"])
-    assert not rows(panel, "employee", tab_no="T9001")
+    assert not rows(panel, "employee", person_id="P0001")
     with pytest.raises(ValueError, match="Этапа"):
         panel.add_to_team(team_form(stage=5))
     with pytest.raises(ValueError, match="основание"):
-        panel.add_to_team(team_form(tab_no="T0003", basis=""))
+        panel.add_to_team(team_form(person_id="T0003", basis=""))
 
 
 def test_remove_from_team_closes_assignment_and_survives_reload(panel):
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"
+    )
     with pytest.raises(ValueError, match="раньше"):
         panel.remove_from_team(identifier, "2000-01-01", "уход", "Условно")
     panel.remove_from_team(identifier, "2026-08-31", "перевод", "Условный приказ")

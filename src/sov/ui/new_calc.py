@@ -159,7 +159,7 @@ def render_new_calc(service, registry, root):
         # 3. Команда.
         st.markdown("#### Команда")
         team = [{"Взять": True, **person} for person in draft["team"]]
-        employees = {e["tab_no"]: e for e in registry.rows("employee")}
+        employees = {e["person_id"]: e for e in registry.rows("employee")}
         extra = st.multiselect(
             "Добавить вручную",
             sorted(employees),
@@ -171,7 +171,7 @@ def render_new_calc(service, registry, root):
             team.append(
                 {
                     "Взять": True,
-                    "tab_no": tab,
+                    "person_id": tab,
                     "fio": employees[tab]["fio"],
                     "category": "РУПК",
                     "role": "другая",
@@ -191,9 +191,9 @@ def render_new_calc(service, registry, root):
             team,
             hide_index=True,
             use_container_width=True,
-            disabled=["tab_no", "fio", "source", "individual"],
+            disabled=["person_id", "fio", "source", "individual"],
             column_config={
-                "tab_no": "Таб. №",
+                "person_id": "№ сотр.",
                 "fio": "ФИО",
                 "category": st.column_config.SelectboxColumn(
                     "Категория", options=["КУПК (РП/ЗРП)", "КУПК", "РУПК", "МП"]

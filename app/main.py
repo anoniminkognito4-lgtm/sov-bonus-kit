@@ -24,6 +24,7 @@ from sov.ui.milestones import (
     render_project_milestones,
 )
 from sov.ui.new_calc import open_new_calc, render_hints, render_new_calc
+from sov.ui.people import render_people, render_person_questions
 from sov.ui.redistribution import render_redistribution
 from sov.ui.registry import render_calculator, render_registry
 from sov.ui.scenario import render_scenario
@@ -92,7 +93,7 @@ if role != ADMIN:
         actor = Actor(
             account,
             role,
-            grant["tab_no"],
+            grant["person_id"],
             tuple(map(tuple, grant["projects"])),
             tuple(grant["staff"]),
         )
@@ -114,6 +115,7 @@ page = st.sidebar.radio(
         "Проекты",
         "Новый калькулятор",
         "Должности",
+        "Люди",
         "Загрузка",
         "Проблемы",
         "Ручные решения",
@@ -137,9 +139,9 @@ def refresh(message):
     st.rerun()
 
 
-def goto_employee(tab_no):
+def goto_employee(person_id):
     st.session_state["page"] = "Сотрудники"
-    st.session_state["focus_tab"] = tab_no
+    st.session_state["focus_tab"] = person_id
 
 
 def run_calculation(ids=None):
@@ -226,7 +228,7 @@ def display_exports(entries, results, identifier, closed=None):
 
 
 LABELS = {
-    "tab_no": "Табельный номер",
+    "person_id": "№ сотрудника",
     "fio": "ФИО",
     "department": "Подразделение",
     "project_code": "Код проекта",
@@ -326,6 +328,9 @@ TYPE_LABELS = {
     "redistribution": "Перераспределение",
     "rp_project_set": "Нормирование РП",
     "position_ref": "Справочник должностей",
+    "person_alias": "Решение о человеке",
+    "person_merge": "Тот же человек",
+    "person_split": "Другой человек",
     "position_fix": "Исправления должностей",
     "project_flag": "ЛЦ/СКБ",
     "team_add": "Добавлен в команду",
@@ -464,6 +469,7 @@ elif page == "Загрузка":
         table([preview.summary], hide_index=True)
         if preview.kind == "milestone":
             render_milestone_preview(preview)
+        render_person_questions(service, preview, refresh)
         if preview.changes:
             table(
                 [
@@ -547,11 +553,11 @@ elif page == "Сотрудники":
                 r["assignment_id"] for r in calculation.entries if r["calc_status"] == amount_status
             }
             matching = [a for a in matching if a["id"] in allowed]
-        tabs = {a["tab_no"] for a in matching}
-        people = {e["tab_no"]: e for e in employees if e["tab_no"] in tabs}
+        tabs = {a["person_id"] for a in matching}
+        people = {e["person_id"]: e for e in employees if e["person_id"] in tabs}
         table(
             [
-                {"Табельный номер": e["tab_no"], "ФИО": e["fio"], "Подразделение": e["department"]}
+                {"№ сотрудника": e["person_id"], "ФИО": e["fio"], "Подразделение": e["department"]}
                 for e in people.values()
             ],
             hide_index=True,
@@ -560,17 +566,17 @@ elif page == "Сотрудники":
             focus = st.session_state.pop("focus_tab", None)
             if focus in people:
                 st.session_state["person_tab"] = focus
-            tab_no = st.selectbox(
+            person_id = st.selectbox(
                 "Карточка сотрудника",
                 list(people),
                 format_func=lambda key: f"{people[key]['fio']} · {key}",
                 key="person_tab",
             )
-            card = (str(registry.path), author, tab_no)
+            card = (str(registry.path), author, person_id)
             if st.session_state.get("_audited_card") != card:
-                service.view("employee", tab_no)
+                service.view("employee", person_id)
                 st.session_state["_audited_card"] = card
-            person_assignments = [a for a in matching if a["tab_no"] == tab_no]
+            person_assignments = [a for a in matching if a["person_id"] == person_id]
             identifier = st.selectbox(
                 "Назначение",
                 [a["id"] for a in person_assignments],
@@ -603,11 +609,12 @@ elif page == "Сотрудники":
                     table(value["case"]["employees"][0]["periods"], hide_index=True)
                 with st.expander("История начислений и решений"):
                     table(
-                        [r for r in registry.rows("accrual") if r["tab_no"] == tab_no],
+                        [r for r in registry.rows("accrual") if r["person_id"] == person_id],
                         hide_index=True,
                     )
                     table(
-                        [r for r in service.decisions() if r["tab_no"] == tab_no], hide_index=True
+                        [r for r in service.decisions() if r["person_id"] == person_id],
+                        hide_index=True,
                     )
                 render_scenario(service, identifier, value["case"], selected_quarter)
             except ValueError as error:
@@ -649,6 +656,9 @@ elif page == "Проекты":
 elif page == "Должности":
     render_positions(service, registry)
 
+elif page == "Люди":
+    render_people(registry)
+
 elif page == "Проблемы":
     st.subheader("Проблемы расчёта")
     if st.button("Обновить проблемы", key="refresh_problems"):
@@ -661,10 +671,10 @@ elif page == "Проблемы":
             if mode == "Все" or p["blocking"] == (mode == "Блокирующие")
         ]
         table(problems, hide_index=True)
-        tabs = sorted({p["tab_no"] for p in problems if p.get("tab_no")})
+        tabs = sorted({p["person_id"] for p in problems if p.get("person_id")})
         if tabs:
-            tab_no = st.selectbox("Сотрудник с проблемой", tabs)
-            st.button("Перейти в карточку", on_click=goto_employee, args=(tab_no,))
+            person_id = st.selectbox("Сотрудник с проблемой", tabs)
+            st.button("Перейти в карточку", on_click=goto_employee, args=(person_id,))
         download(
             "Список проблем · CSV",
             problems_file(problems),
@@ -689,7 +699,7 @@ elif page == "Проблемы":
 elif page == "Ручные решения":
     st.subheader("Ручные решения Группы СОВ")
     labels = {
-        a["id"]: f"{a['tab_no']} · {a['project_code']} · этап {a['stage']}" for a in assignments
+        a["id"]: f"{a['person_id']} · {a['project_code']} · этап {a['stage']}" for a in assignments
     }
     if not labels:
         st.info("Сначала загрузите назначения.")
@@ -814,7 +824,7 @@ elif page == "Расчёт и закрытие":
             [a["id"] for a in assignments],
             placeholder="Все назначения",
             format_func=lambda key: next(
-                f"{a['tab_no']} · {a['project_code']}" for a in assignments if a["id"] == key
+                f"{a['person_id']} · {a['project_code']}" for a in assignments if a["id"] == key
             ),
         )
         if st.button("Рассчитать", key="calculate", disabled=not assignments):
@@ -848,10 +858,10 @@ elif page == "Расчёт и закрытие":
 elif page == "Журнал":
     st.subheader("Журнал действий")
     who = st.text_input("Фильтр по автору")
-    tab_no = st.text_input("Табельный номер / код проекта")
+    person_id = st.text_input("№ сотрудника, ФИО или код проекта")
     journal = [
         r
         for r in service.journal()
-        if (not who or who in r["who"]) and (not tab_no or tab_no in str(r))
+        if (not who or who in r["who"]) and (not person_id or person_id in str(r))
     ]
     table(journal, hide_index=True)

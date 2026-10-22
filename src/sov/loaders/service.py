@@ -118,6 +118,8 @@ def _prepare(registry, path, author, connection, options=None):
             add(line, *map_row(kind, dict(raw), state))
         except Unmatched as error:
             unmatched.append({"line": line, "row": raw, "message": str(error)})
+            if error.problem:
+                problems.append({**error.problem, "line": line})
         except (ValueError, TypeError, KeyError) as error:
             errors.append({"line": line, "message": str(error)})
     if kind == "sov_param":
@@ -374,7 +376,7 @@ def _check_references(state):
         "redistribution",
     ):
         for row in state[table].values():
-            if not exists("employee", tab_no=row["tab_no"]):
+            if not exists("employee", person_id=row["person_id"]):
                 raise ValueError(
                     "Откат оставит строки без сотрудника: сначала откатите зависимые загрузки"
                 )

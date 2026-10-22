@@ -27,7 +27,7 @@ ADMIN = "Группа СОВ"
 class Actor:
     name: str
     role: str = ADMIN
-    tab_no: str | None = None
+    person_id: str | None = None
     projects: tuple = ()
     staff: tuple = ()
 
@@ -159,7 +159,7 @@ class PanelService:
                 self.registry.rows("sov_param", connection), quarter(approved_date)
             )
             adapter = RegistryAdapter(self.registry, connection, params)
-            adapter.one("employee", tab_no=leader)
+            adapter.one("employee", person_id=leader)
             enriched = []
             for row in rows:
                 if not isfinite(row["pct"]):
@@ -181,7 +181,7 @@ class PanelService:
                 {
                     "id": identifier,
                     "kind": "redistribution_batch",
-                    "tab_no": leader,
+                    "person_id": leader,
                     "payload_json": json_text({"rows": enriched}),
                     "basis": basis.strip(),
                     "file_ref": file_ref.strip(),
@@ -335,7 +335,7 @@ class PanelService:
                 {
                     "id": identifier,
                     "kind": kind,
-                    "tab_no": assignment["tab_no"],
+                    "person_id": assignment["person_id"],
                     "payload_json": json_text(payload),
                     "basis": basis.strip(),
                     "file_ref": file_ref.strip(),
@@ -368,7 +368,7 @@ class PanelService:
                 {
                     "id": identifier,
                     "kind": "status_alias",
-                    "tab_no": None,
+                    "person_id": None,
                     "payload_json": json_text({"raw": raw, "status": status}),
                     "basis": basis.strip(),
                     "file_ref": file_ref.strip(),
@@ -420,7 +420,7 @@ class PanelService:
                 {
                     "id": identifier,
                     "kind": kind,
-                    "tab_no": None,
+                    "person_id": None,
                     "payload_json": json_text(dict(payload)),
                     "basis": basis.strip(),
                     "file_ref": file_ref.strip(),
@@ -473,6 +473,67 @@ class PanelService:
         from sov.loaders.service import apply_records
 
         return apply_records(self.registry, records, label, self.actor.name, kind)
+
+    def person_merge(self, question, person_id, basis):
+        """Тот же человек (перевод, смена фамилии): ФИО и подразделение → person_id (D-101)."""
+        require_admin(self.actor)
+        from sov.loaders import persons
+
+        if not basis.strip():
+            raise ValueError("Укажите основание")
+        if not any(e["person_id"] == person_id for e in self.registry.rows("employee")):
+            raise ValueError("Сотрудник не найден")
+        record = (
+            "person_alias",
+            {
+                "fio": persons.norm(question["fio"]),
+                "department": persons.norm(question.get("department")),
+                "person_id": person_id,
+                "kind": "merge",
+                "basis": basis.strip(),
+            },
+        )
+        return self._records(
+            [record], f"Тот же человек: {question['fio']} → {person_id}. {basis}", "person_merge"
+        )
+
+    def person_split(self, question, basis):
+        """Разные люди: заводится новый сотрудник со своим номером (D-101)."""
+        require_admin(self.actor)
+        from sov.loaders import persons
+
+        if not basis.strip():
+            raise ValueError("Укажите основание")
+        state = {
+            "employee": self.registry.rows("employee"),
+            "person_alias": self.registry.rows("person_alias"),
+        }
+        person_id = persons.next_person_id(state)
+        records = [
+            (
+                "employee",
+                {
+                    "person_id": person_id,
+                    "fio": persons.clean(question["fio"]),
+                    "department": persons.clean(question.get("department")) or None,
+                    "position": persons.clean(question.get("position")) or None,
+                },
+            ),
+            (
+                "person_alias",
+                {
+                    "fio": persons.norm(question["fio"]),
+                    "department": persons.norm(question.get("department")),
+                    "person_id": person_id,
+                    "kind": "split",
+                    "basis": basis.strip(),
+                },
+            ),
+        ]
+        report = self._records(
+            records, f"Другой человек: {question['fio']} → {person_id}. {basis}", "person_split"
+        )
+        return {**report, "person_id": person_id}
 
     def position_questions(self):
         """Должности, не распознанные справочником: вопросы Группе СОВ (D-098)."""
@@ -530,9 +591,10 @@ class PanelService:
         from sov.services import team
 
         records, identity = team.add_records(self.registry.rows, DEFAULT_PARAMS, form)
+        person = next(data["person_id"] for table, data in records if table == "assignment")
         report = self._records(
             records,
-            f"Добавлен в команду {form['tab_no']} → {form['project_code']}/{form['queue']}"
+            f"Добавлен в команду {person} → {form['project_code']}/{form['queue']}"
             f"/{form['stage']} с {form['date_from']}. {form['basis'].strip()}",
             "team_add",
         )
@@ -549,7 +611,7 @@ class PanelService:
         data = record[1]
         return self._records(
             [record],
-            f"Убран с проекта {data['tab_no']} ← {data['project_code']}/{data['queue']}"
+            f"Убран с проекта {data['person_id']} ← {data['project_code']}/{data['queue']}"
             f"/{data['stage']}: {end_reason} {date_to}. {basis.strip()}",
             "team_remove",
         )
@@ -571,7 +633,7 @@ class PanelService:
                 {
                     "id": str(uuid4()),
                     "kind": "calc_set_change",
-                    "tab_no": None,
+                    "person_id": None,
                     "payload_json": json_text(dict(payload)),
                     "basis": basis.strip(),
                     "file_ref": file_ref.strip(),
@@ -727,7 +789,7 @@ class PanelService:
             employee = result["employees"][0]
             _decision_problems(result, decisions)
             source = adapter.one("assignment", id=identifier)
-            hr = adapter.one("employee", tab_no=source["tab_no"])
+            hr = adapter.one("employee", person_id=source["person_id"])
             project = adapter.one(
                 "project", project_code=source["project_code"], queue=source["queue"]
             )
@@ -746,7 +808,12 @@ class PanelService:
             relevant |= not case["final"].get("plan") and bool(result["problems"])
             if relevant:
                 problems.extend(
-                    {**p, "assignment_id": identifier, "project_code": source["project_code"]}
+                    {
+                        **{k: v for k, v in p.items() if k != "tab_no"},
+                        "person_id": p.get("tab_no"),  # движок называет сотрудника tab_no
+                        "assignment_id": identifier,
+                        "project_code": source["project_code"],
+                    }
                     for p in result["problems"]
                 )
             for item in employee["milestones"]:
@@ -831,7 +898,7 @@ class PanelService:
                     {
                         "code": "FM_NOT_APPROVED",
                         "blocking": True,
-                        "tab_no": entry["tab_no"],
+                        "person_id": entry["person_id"],
                         "assignment_id": entry["assignment_id"],
                         "project_code": entry["project_code"],
                         "message": "ФМ квартала не утверждена ФЮБ",
@@ -852,7 +919,7 @@ class PanelService:
                     problem = {
                         "code": "AMOUNT_CHANGE_10PCT",
                         "blocking": False,
-                        "tab_no": source["tab_no"],
+                        "person_id": source["person_id"],
                         "assignment_id": identifier,
                         "project_code": source["project_code"],
                         "message": (
@@ -907,7 +974,7 @@ class PanelService:
             name=milestone_name,
         )
         return {
-            "tab_no": source["tab_no"],
+            "person_id": source["person_id"],
             "fio": hr["fio"],
             "department": hr["department"],
             "project_code": source["project_code"],
@@ -949,7 +1016,7 @@ class PanelService:
                 data = {
                     k: entry[k]
                     for k in (
-                        "tab_no",
+                        "person_id",
                         "assignment_id",
                         "kind",
                         "milestone_code",

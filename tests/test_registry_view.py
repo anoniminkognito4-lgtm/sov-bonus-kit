@@ -23,8 +23,8 @@ def loaded(tmp_path_factory):
     registry.dispose()
 
 
-def row_for(view, tab_no, as_of=AS_OF):
-    return next(r for r in view.overview(as_of) if r["tab_no"] == tab_no)
+def row_for(view, person_id, as_of=AS_OF):
+    return next(r for r in view.overview(as_of) if r["person_id"] == person_id)
 
 
 def test_one_row_per_assignment(loaded):
@@ -49,7 +49,7 @@ def test_individual_dates_and_newcomer_milestones(loaded):
     newcomer = row_for(view, "T0011")
     assert newcomer["individual_count"] == 1
     assert newcomer["total"] < 7  # вехи первых 60 дней не участвуют
-    assignment = next(a for a in view.rows("assignment") if a["tab_no"] == "T0011")
+    assignment = next(a for a in view.rows("assignment") if a["person_id"] == "T0011")
     states = {m["state"] for m in view.milestones_for(assignment, AS_OF)}
     assert "не участвует" in states
 

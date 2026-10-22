@@ -114,7 +114,7 @@ def payroll_rows(closed):
             continue
         rows.append(
             [
-                entry["tab_no"],
+                "",  # табельного номера нет: человек — по ФИО и подразделению (D-101)
                 entry["fio"],
                 entry["department"],
                 f"{entry['project']}, очередь {entry['queue']}",
@@ -161,7 +161,7 @@ def statement(results, project_code, stage, preliminary=True):
         for item in [*employee["milestones"], employee["final"], *employee["payouts"]]:
             rows.append(
                 [
-                    employee["tab_no"],
+                    "",
                     employee["fio"],
                     case["project"],
                     stage,
@@ -178,7 +178,7 @@ def statement(results, project_code, stage, preliminary=True):
             )
         totals.append(
             [
-                employee["tab_no"],
+                "",
                 employee["fio"],
                 money(employee["pb"]) if employee["pb"] is not None else None,
                 employee["k_fin"],
@@ -217,13 +217,13 @@ def statement(results, project_code, stage, preliminary=True):
 
 
 def problems_file(problems):
-    columns = ("Код", "Табельный номер", "Проект", "Веха", "Блокирует", "Описание")
+    columns = ("Код", "Номер сотрудника", "Проект", "Веха", "Блокирует", "Описание")
     return csv_bytes(
         columns,
         [
             [
                 p["code"],
-                p.get("tab_no"),
+                p.get("person_id"),
                 p.get("project_code"),
                 p.get("milestone"),
                 "Да" if p["blocking"] else "Нет",
@@ -239,7 +239,8 @@ def summary_file(entries, previous=()):
         totals = {}
         for row in rows:
             if row["calc_status"] == "рассчитано":
-                key = (row["tab_no"], row["fio"], row["project"], row["stage"])
+                person = row.get("person_id", row.get("tab_no"))  # снимки до D-101
+                key = (person, row["fio"], row["project"], row["stage"])
                 totals[key] = totals.get(key, 0) + row["amount"]
         return totals
 
@@ -257,7 +258,7 @@ def summary_file(entries, previous=()):
         {
             "Сводная": (
                 (
-                    "Табельный номер",
+                    "Номер сотрудника",
                     "ФИО",
                     "Проект",
                     "Этап",

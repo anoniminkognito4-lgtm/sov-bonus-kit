@@ -162,7 +162,7 @@ def test_c08_team_from_previous_stage_own_boundary(panel):
     create(panel)
     rows = [
         {
-            "tab_no": tab,
+            "person_id": tab,
             "sov_type": "Вехи",
             "category": "РУПК",
             "role": "другая",
@@ -173,20 +173,20 @@ def test_c08_team_from_previous_stage_own_boundary(panel):
         for tab in ("T7001", "T7002")
     ]
     employees = [
-        ("employee", {"tab_no": t, "fio": f"Тестов {t}", "position": "Условная должность"})
+        ("employee", {"person_id": t, "fio": f"Тестов {t}", "position": "Условная должность"})
         for t in ("T7001", "T7002")
     ]
     apply_records(panel.registry, employees, "сотрудники", "тест", "test")
     store = new_calc.Store(panel.registry.rows)
     for person in rows:
         records = []
-        identity = new_calc.assignment_id(person["tab_no"], "TP-M1", "1", 4)
+        identity = new_calc.assignment_id(person["person_id"], "TP-M1", "1", 4)
         records.append(
             (
                 "assignment",
                 {
                     "id": identity,
-                    "tab_no": person["tab_no"],
+                    "person_id": person["person_id"],
                     "project_code": "TP-M1",
                     "queue": "1",
                     "stage": 4,
@@ -207,7 +207,7 @@ def test_c08_team_from_previous_stage_own_boundary(panel):
             (
                 "individual_date",
                 {
-                    "tab_no": "T7002",
+                    "person_id": "T7002",
                     "milestone_code": key["milestone_code"],
                     "individual_plan": "2027-02-15",
                 },
@@ -219,13 +219,13 @@ def test_c08_team_from_previous_stage_own_boundary(panel):
     )
     draft = panel.new_calc_draft("TP-M1", "1", 5)
     assert draft["header"]["start_date"] == "2027-01-01"  # день после РнВ этапа 4
-    team = {p["tab_no"]: p for p in draft["team"]}
+    team = {p["person_id"]: p for p in draft["team"]}
     assert team["T7001"]["date_from"] == "2027-01-01" and not team["T7001"]["individual"]
     assert team["T7002"]["date_from"] == "2027-02-16" and team["T7002"]["individual"]
     created = create(panel, stage=5, start=draft["header"]["start_date"], team=draft["team"])
     assert created["changed"] > 0
     new = [a for a in panel.registry.rows("assignment") if a["stage"] == 5]
-    assert {(a["tab_no"], a["date_from"], a["from_prev_stage"]) for a in new} == {
+    assert {(a["person_id"], a["date_from"], a["from_prev_stage"]) for a in new} == {
         ("T7001", "2027-01-01", 1),
         ("T7002", "2027-02-16", 1),
     }
@@ -418,13 +418,13 @@ def test_calculation_uses_fixed_set_and_manual_after_accrued_change(panel):
         [
             (
                 "employee",
-                {"tab_no": "T7001", "fio": "Тестов Семь", "position": "Условная должность"},
+                {"person_id": "T7001", "fio": "Тестов Семь", "position": "Условная должность"},
             ),
             (
                 "assignment",
                 {
                     "id": identity,
-                    "tab_no": "T7001",
+                    "person_id": "T7001",
                     "project_code": "TP-M1",
                     "queue": "1",
                     "stage": 4,

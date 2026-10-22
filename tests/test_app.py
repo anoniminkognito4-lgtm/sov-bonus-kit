@@ -83,7 +83,7 @@ def test_quarter_ui_load_preview_fix_calculate_close_export(app, tmp_path):
         ui.button(key="apply_upload").click().run()
         assert not ui.exception
     navigate(ui, "Ручные решения")
-    assignment = next(a for a in registry.rows("assignment") if a["tab_no"] == "T0039")
+    assignment = next(a for a in registry.rows("assignment") if a["person_id"] == "T0039")
     ui.selectbox(key="decision_assignment").set_value(assignment["id"]).run()
     ui.checkbox(key="approve_early").check()
     ui.text_area(key="decision_basis").set_value("Условное согласование")
@@ -157,7 +157,7 @@ def test_whatif_bs_kpi_and_salary_controls(app):
         if adapter.build_case(a["id"])["bs"].get("share_transferred") == 0.6
         and a["category"] == "КУПК"
     )
-    ui.selectbox(key="person_tab").set_value(assignment["tab_no"]).run()
+    ui.selectbox(key="person_tab").set_value(assignment["person_id"]).run()
     ui.button(key="whatif_open").click().run()
     ui.checkbox(key="wi_historical").check().run()
     ui.slider(key="wi_bs").set_value(95.0).run()
@@ -172,7 +172,7 @@ def test_whatif_bs_kpi_and_salary_controls(app):
         != result["scenario"]["employees"][0]["pb"]
     )
     # МП: квартальный ползунок влияет на результат общего движка.
-    tab = next(a["tab_no"] for a in adapter.state["assignment"] if a["category"] == "МП")
+    tab = next(a["person_id"] for a in adapter.state["assignment"] if a["category"] == "МП")
     ui.selectbox(key="person_tab").set_value(tab).run()
     ui.button(key="whatif_open").click().run()
     sliders = [slider for slider in ui.slider if slider.key.startswith("wi_kpi_")]
@@ -294,6 +294,6 @@ def test_team_forms_and_positions_screen(app):
     added = [
         a
         for a in Registry(path).rows("assignment")
-        if a["tab_no"] == "T0002" and a["project_code"] == "TP-T01"
+        if a["person_id"] == "T0002" and a["project_code"] == "TP-T01"
     ]
     assert added and added[0]["date_from"] == "2026-08-01"

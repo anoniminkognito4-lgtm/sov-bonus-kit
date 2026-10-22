@@ -154,7 +154,7 @@ def select_milestones(store, project, queue, stage):
     return result
 
 
-def stage_boundary(store, project, queue, stage, tab_no=None, individual=None):
+def stage_boundary(store, project, queue, stage, person_id=None, individual=None):
     """Граница этапа: план ключевой вехи (или индивидуальный срок сотрудника)."""
     keys = [
         m
@@ -164,8 +164,8 @@ def stage_boundary(store, project, queue, stage, tab_no=None, individual=None):
     if not keys:
         return None
     key = min(keys, key=lambda m: store.plan(m["milestone_code"]) or "9999-12-31")
-    if tab_no and individual:
-        own = individual.get((tab_no, key["milestone_code"]))
+    if person_id and individual:
+        own = individual.get((person_id, key["milestone_code"]))
         if own:
             return own
     return store.plan(key["milestone_code"])
@@ -183,21 +183,21 @@ def default_header(store, project, queue, stage):
 def team_proposals(rows, store, project, queue, stage, start_date):
     """Переход с этапа N−1: живые назначения без даты ухода (NEW_CALC §5)."""
     individual = {
-        (r["tab_no"], r["milestone_code"]): r["individual_plan"] for r in rows("individual_date")
+        (r["person_id"], r["milestone_code"]): r["individual_plan"] for r in rows("individual_date")
     }
-    people = {e["tab_no"]: e for e in rows("employee")}
+    people = {e["person_id"]: e for e in rows("employee")}
     result = []
     for a in rows("assignment"):
         if (a["project_code"], a["queue"], a["stage"]) != (project, queue, stage - 1):
             continue
         if a["end_reason"]:
             continue
-        boundary = stage_boundary(store, project, queue, stage - 1, a["tab_no"], individual)
+        boundary = stage_boundary(store, project, queue, stage - 1, a["person_id"], individual)
         begin = _next_day(boundary) if boundary else start_date
         result.append(
             {
-                "tab_no": a["tab_no"],
-                "fio": people.get(a["tab_no"], {}).get("fio"),
+                "person_id": a["person_id"],
+                "fio": people.get(a["person_id"], {}).get("fio"),
                 "category": a["category"],
                 "role": a["role"],
                 "position": a["position"],
@@ -251,14 +251,14 @@ def build_records(rows, store, project, queue, stage, header, team, author):
         )
     npv = {(r["project_code"], r["quarter"]): r for r in rows("npv")}
     for person in team:
-        identity = assignment_id(person["tab_no"], project, queue, stage)
+        identity = assignment_id(person["person_id"], project, queue, stage)
         from_prev = person.get("source", "").startswith("этап")
         records.append(
             (
                 "assignment",
                 {
                     "id": identity,
-                    "tab_no": person["tab_no"],
+                    "person_id": person["person_id"],
                     "project_code": project,
                     "queue": queue,
                     "stage": stage,

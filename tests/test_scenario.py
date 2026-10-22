@@ -175,7 +175,7 @@ def test_nearest_uses_explicit_date_and_calculated_nonzero_only():
 def test_service_does_not_change_database_snapshot_or_exports_and_is_fast(panel, tmp_path):  # noqa: F811
     fix_sources(panel, tmp_path)
     panel.close(panel.calculate("2026-Q3"))
-    assignment = next(a for a in panel.registry.rows("assignment") if a["tab_no"] == "T0008")
+    assignment = next(a for a in panel.registry.rows("assignment") if a["person_id"] == "T0008")
     before = sha256(panel.registry.path.read_bytes()).hexdigest()
     journal = panel.journal()
     revision = panel.registry.revision()
@@ -207,7 +207,7 @@ def test_service_does_not_change_database_snapshot_or_exports_and_is_fast(panel,
 
 
 def test_pending_manual_decision_is_visible_in_both_comparisons(panel):  # noqa: F811
-    assignment = next(a for a in panel.registry.rows("assignment") if a["tab_no"] == "T0008")
+    assignment = next(a for a in panel.registry.rows("assignment") if a["person_id"] == "T0008")
     panel.save_decision(
         "redistribution",
         assignment["id"],

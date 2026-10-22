@@ -44,6 +44,11 @@ class Registry:
                         connection.exec_driver_sql(
                             f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {kind}'
                         )
+                        if column.name == "person_id" and "tab_no" in existing:
+                            # До D-101 сотрудник определялся табельным номером.
+                            connection.exec_driver_sql(
+                                f'UPDATE "{table.name}" SET "person_id" = "tab_no"'
+                            )
 
     @contextmanager
     def transaction(self):

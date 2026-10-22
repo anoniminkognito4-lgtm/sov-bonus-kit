@@ -115,7 +115,7 @@ def render_team_forms(service, registry, project):
         for s in registry.rows("stage")
         if s["project_code"] == code and s["queue"] == queue
     )
-    employees = {e["tab_no"]: e for e in registry.rows("employee")}
+    employees = {e["person_id"]: e for e in registry.rows("employee")}
     left, right = st.columns(2)
     with left.expander("➕ Добавить в команду"):
         if not stages:
@@ -130,14 +130,14 @@ def render_team_forms(service, registry, project):
             new = {}
             if choice == NEW:
                 c1, c2 = st.columns(2)
-                tab_no = c1.text_input("Табельный №", key=f"team_newtab_{code}_{queue}")
-                new["fio"] = c2.text_input("ФИО", key=f"team_fio_{code}_{queue}")
-                new["department"] = c1.text_input("Подразделение", key=f"team_dep_{code}_{queue}")
+                person_id = None  # номер сотрудника присвоит система (D-101)
+                new["fio"] = c1.text_input("ФИО", key=f"team_fio_{code}_{queue}")
+                new["department"] = c2.text_input("Подразделение", key=f"team_dep_{code}_{queue}")
                 new["hire_date"] = None
                 department = new["department"]
                 current = ""
             else:
-                tab_no = choice
+                person_id = choice
                 department = employees[choice]["department"]
                 current = employees[choice]["position"] or ""
             position = st.text_input(
@@ -172,7 +172,7 @@ def render_team_forms(service, registry, project):
                 try:
                     report = service.add_to_team(
                         {
-                            "tab_no": tab_no.strip(),
+                            "person_id": person_id,
                             "new_employee": new if choice == NEW else None,
                             "project_code": code,
                             "queue": queue,
@@ -203,7 +203,9 @@ def render_team_forms(service, registry, project):
             st.info("В команде нет действующих назначений.")
             return
         names = {
-            a["id"]: f"{employees.get(a['tab_no'], {}).get('fio', a['tab_no'])} · этап {a['stage']}"
+            a[
+                "id"
+            ]: f"{employees.get(a['person_id'], {}).get('fio', a['person_id'])} · этап {a['stage']}"
             for a in active
         }
         identifier = st.selectbox(

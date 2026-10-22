@@ -330,7 +330,7 @@ def cancel_milestone(panel, code="TP-T01-M06", status="Отменена"):
         connection.execute(
             update(table).where(table.c.milestone_code == code).values(status=status)
         )
-    return next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    return next(a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001")
 
 
 def test_unknown_status_kept_in_weights_but_not_paid(panel):
@@ -372,18 +372,20 @@ def test_default_params_unchanged_for_goldens():
     assert DEFAULT_PARAMS.milestone_statuses == ("Назначена", "Выполнена")
 
 
-def set_employee(panel, tab_no, **values):
+def set_employee(panel, person_id, **values):
     table = TABLES["employee"]
     with panel.registry.transaction() as connection:
-        connection.execute(update(table).where(table.c.tab_no == tab_no).values(**values))
+        connection.execute(update(table).where(table.c.person_id == person_id).values(**values))
 
 
 def test_registry_uses_position_table_for_dup(panel):
     set_employee(panel, "T0001", department="ДУП БПСК", position="Главный инженер проекта")
     table = TABLES["assignment"]
     with panel.registry.transaction() as connection:
-        connection.execute(update(table).where(table.c.tab_no == "T0001").values(position=None))
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+        connection.execute(update(table).where(table.c.person_id == "T0001").values(position=None))
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"
+    )
     value = panel.calculate("2026-Q3", [identifier]).results[identifier]
     person = value["case"]["employees"][0]
     # 4 этап ГИП — 75%; один проект, режим «буквально» доводит до 100% (И-9).
@@ -400,7 +402,9 @@ def test_registry_position_without_load_is_incomplete(panel):
     set_employee(
         panel, "T0001", department="ОРП 1 ДРП", position="Младший менеджер по разработке продукта"
     )
-    identifier = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    identifier = next(
+        a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001"
+    )
     calculation = panel.calculate("2026-Q3", [identifier])
     person = calculation.results[identifier]["case"]["employees"][0]
     assert person["load_source"] == "файл назначений"

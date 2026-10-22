@@ -37,7 +37,7 @@ class RegistryView:
         self.rows = rows
         self.params = params
         self.plans = _latest_plans(rows)
-        self.employees = {e["tab_no"]: e for e in rows("employee")}
+        self.employees = {e["person_id"]: e for e in rows("employee")}
         self.projects = {(p["project_code"], p["queue"]): p for p in rows("project")}
         self.stages = {(s["project_code"], s["queue"], s["stage"]): s for s in rows("stage")}
         self.milestones = {}
@@ -45,7 +45,7 @@ class RegistryView:
             key = (m["project_code"], m["queue"], m["stage"])
             self.milestones.setdefault(key, []).append(m)
         self.individual = {
-            (r["tab_no"], r["milestone_code"]): r["individual_plan"]
+            (r["person_id"], r["milestone_code"]): r["individual_plan"]
             for r in rows("individual_date")
         }
         self.loads = {}
@@ -66,7 +66,7 @@ class RegistryView:
         stage_milestones = self.milestones.get(key, [])
         key_plan = next(
             (
-                self.individual.get((assignment["tab_no"], m["milestone_code"]))
+                self.individual.get((assignment["person_id"], m["milestone_code"]))
                 or self.plans.get(m["milestone_code"])
                 for m in stage_milestones
                 if m["is_key"]
@@ -75,7 +75,7 @@ class RegistryView:
         )
         for m in stage_milestones:
             plan = self.plans.get(m["milestone_code"])
-            individual = self.individual.get((assignment["tab_no"], m["milestone_code"]))
+            individual = self.individual.get((assignment["person_id"], m["milestone_code"]))
             plan_eff = individual or plan
             if milestone_part(m["name"]) == 2 and assignment["stage"] == 4 and key_plan:
                 plan_eff = key_plan  # сл. 55 п. 19: вторая часть — к сроку РнВ
@@ -123,7 +123,7 @@ class RegistryView:
         """Одна строка на назначение: сотрудник × проект (очередь) × этап."""
         rows = []
         for a in self.rows("assignment"):
-            person = self.employees.get(a["tab_no"], {})
+            person = self.employees.get(a["person_id"], {})
             project = self.projects.get((a["project_code"], a["queue"]), {})
             milestones = self.milestones_for(a, as_of)
             participating = [
@@ -142,7 +142,7 @@ class RegistryView:
             rows.append(
                 {
                     "assignment_id": a["id"],
-                    "tab_no": a["tab_no"],
+                    "person_id": a["person_id"],
                     "fio": person.get("fio"),
                     "department": person.get("department"),
                     "project": project.get("name") or a["project_code"],

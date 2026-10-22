@@ -288,10 +288,10 @@ class LoadPlanner:
 
     def for_assignment(self, assignment, employee):
         """(строки загрузки или None, источник, проблемы [(код, блокирует)])."""
-        tab_no = employee["tab_no"]
-        if tab_no not in self._cache:
-            self._cache[tab_no] = self._plan(employee)
-        planned = self._cache[tab_no].get(assignment["id"])
+        person_id = employee["person_id"]
+        if person_id not in self._cache:
+            self._cache[person_id] = self._plan(employee)
+        planned = self._cache[person_id].get(assignment["id"])
         file_rows = sorted(
             self.adapter.rows("assignment_load", assignment_id=assignment["id"]),
             key=lambda r: r["date_from"],
@@ -320,7 +320,7 @@ class LoadPlanner:
     def _plan(self, employee):
         block = department_block(employee["department"], self.params)
         assignments, recognition = [], {}
-        for row in self.adapter.rows("assignment", tab_no=employee["tab_no"]):
+        for row in self.adapter.rows("assignment", person_id=employee["person_id"]):
             resolved, codes = self.adapter.resolve_assignment(row, employee, block)
             assignments.append(resolved)
             recognition[row["id"]] = codes
@@ -344,7 +344,7 @@ class LoadPlanner:
         if mp:
             for key, rows in mp_loads(mp, self.params).items():
                 plan[key] = (rows, "правило МП (сл. 20)", set())
-        rp_rows = self.adapter.rows("rp_project_set", tab_no=employee["tab_no"])
+        rp_rows = self.adapter.rows("rp_project_set", person_id=employee["person_id"])
         rp = [a for a in assignments if a["category"] == "КУПК (РП/ЗРП)"]
         if rp and rp_rows:
             for a in rp:

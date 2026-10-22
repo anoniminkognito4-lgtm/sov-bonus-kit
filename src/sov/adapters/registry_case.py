@@ -86,7 +86,7 @@ class RegistryAdapter:
             loads = self.rows("assignment_load", assignment_id=assignment["id"])
         loads = sorted(loads, key=lambda r: r["date_from"])
         bgbs = sorted(
-            self.rows("bgb_period", tab_no=employee["tab_no"]), key=lambda r: r["date_from"]
+            self.rows("bgb_period", person_id=employee["person_id"]), key=lambda r: r["date_from"]
         )
         leave = assignment["date_to"] if assignment["end_reason"] else None
         if extend and not leave and bgbs:
@@ -117,7 +117,7 @@ class RegistryAdapter:
         code, queue, stage_number = (assignment[k] for k in ("project_code", "queue", "stage"))
         project = self.one("project", project_code=code, queue=queue)
         stage = self.one("stage", project_code=code, queue=queue, stage=stage_number)
-        employee = self.one("employee", tab_no=assignment["tab_no"])
+        employee = self.one("employee", person_id=assignment["person_id"])
         resolved, _ = self.resolve_assignment(
             assignment, employee, department_block(employee["department"], self.params)
         )
@@ -175,7 +175,7 @@ class RegistryAdapter:
                 milestones.append(milestone)
             for individual_row in self.rows(
                 "individual_date",
-                tab_no=employee["tab_no"],
+                person_id=employee["person_id"],
                 milestone_code=source["milestone_code"],
             ):
                 individual["final" if source["is_key"] else source["name"]] = individual_row[
@@ -203,7 +203,9 @@ class RegistryAdapter:
         }
         current_npv = next((v for v in npvs.values() if v is not None), None)
         starts = self.rows("start_npv", assignment_id=identifier)
-        kpi_rows = {r["quarter"]: r["kpi"] for r in self.rows("kpi", tab_no=employee["tab_no"])}
+        kpi_rows = {
+            r["quarter"]: r["kpi"] for r in self.rows("kpi", person_id=employee["person_id"])
+        }
         kpis = milestone_kpis(milestones, kpi_rows)
         checkpoint_base = final["fact"] or final["plan"] or end
         checkpoint_dates = [
@@ -215,7 +217,7 @@ class RegistryAdapter:
         ]
         load_rows, load_source, load_issues = self.loads.for_assignment(assignment, employee)
         person = {
-            "tab_no": employee["tab_no"],
+            "tab_no": employee["person_id"],  # поле движка: идентификатор сотрудника
             "fio": employee["fio"],
             "position": assignment["position"],
             "category": resolved["category"],
@@ -379,7 +381,9 @@ class RegistryAdapter:
         combined = {}
         for row in mapping:
             assignments = self.rows(
-                "assignment", tab_no=row["tab_no"], project_code=row["project_code"]
+                "assignment",
+                person_id=row.get("person_id") or row["tab_no"],  # в карте кейсов — tab_no
+                project_code=row["project_code"],
             )
             if len(assignments) != 1:
                 raise ValueError("Карта кейсов неоднозначна: ожидается одно назначение")

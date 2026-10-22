@@ -26,7 +26,7 @@ def quarter_workflow(folder):
         panel.demo(ROOT / "samples")
         for source in make_panel_demo(folder / "Условные исправления"):
             panel.apply(panel.preview(source))
-        assignment = next(a for a in registry.rows("assignment") if a["tab_no"] == "T0039")
+        assignment = next(a for a in registry.rows("assignment") if a["person_id"] == "T0039")
         panel.save_decision(
             "early_stage",
             assignment["id"],

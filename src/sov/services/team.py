@@ -7,6 +7,7 @@ from datetime import date
 
 from sov.adapters.load import department_block
 from sov.adapters.positions import PositionBook, clean, resolve
+from sov.loaders import persons
 from sov.loaders.mapping import assignment_id
 from sov.services.new_calc import start_npv_records
 
@@ -25,10 +26,10 @@ def position_questions(rows, params):
     positions = book(rows)
     if not positions:
         return []
-    employees = {e["tab_no"]: e for e in rows("employee")}
+    employees = {e["person_id"]: e for e in rows("employee")}
     result = {}
     for a in rows("assignment"):
-        employee = employees.get(a["tab_no"])
+        employee = employees.get(a["person_id"])
         if not employee:
             continue
         block = department_block(employee["department"], params)
@@ -38,7 +39,7 @@ def position_questions(rows, params):
         item = result.setdefault(
             (block, clean(raw)), {"block": block, "position": clean(raw), "staff": set()}
         )
-        item["staff"].add(a["tab_no"])
+        item["staff"].add(a["person_id"])
     return [
         {**item, "staff": ", ".join(sorted(item["staff"]))} for _, item in sorted(result.items())
     ]
@@ -136,13 +137,27 @@ def add_records(rows, params, form):
     date_from = form["date_from"]
     date.fromisoformat(date_from)
     records = []
-    employee = next((e for e in rows("employee") if e["tab_no"] == form["tab_no"]), None)
+    employee = next((e for e in rows("employee") if e["person_id"] == form.get("person_id")), None)
     if employee is None:
         new = form.get("new_employee") or {}
-        if not (form["tab_no"] and new.get("fio")):
-            raise ValueError("Новый сотрудник: нужны табельный номер и ФИО")
+        if not new.get("fio"):
+            raise ValueError("Новый сотрудник: нужно ФИО")
+        state = {"employee": rows("employee"), "person_alias": rows("person_alias")}
+        match = persons.People(state).match(new["fio"], new.get("department"), new.get("position"))
+        if match.status != "new":
+            names = (
+                ", ".join(
+                    f"{c['fio']} ({c['department'] or 'без подразделения'})"
+                    for c in match.candidates
+                )
+                or match.person_id
+            )
+            raise ValueError(
+                f"Похожий сотрудник уже есть: {names}. Выберите его в списке "
+                "или решите вопрос на экране «Люди»"
+            )
         employee = {
-            "tab_no": form["tab_no"],
+            "person_id": persons.next_person_id(state),
             "fio": clean(new["fio"]),
             "position": clean(new.get("position")) or None,
             "department": clean(new.get("department")) or None,
@@ -152,7 +167,7 @@ def add_records(rows, params, form):
             "probation_result": None,
         }
         records.append(("employee", employee))
-    identity = assignment_id(employee["tab_no"], project, queue, stage)
+    identity = assignment_id(employee["person_id"], project, queue, stage)
     if any(a["id"] == identity for a in rows("assignment")):
         raise ValueError("Сотрудник уже есть в команде этого этапа")
     base = {
@@ -175,7 +190,7 @@ def add_records(rows, params, form):
             "assignment",
             {
                 "id": identity,
-                "tab_no": employee["tab_no"],
+                "person_id": employee["person_id"],
                 "project_code": project,
                 "queue": queue,
                 "stage": stage,

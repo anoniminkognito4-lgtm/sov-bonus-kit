@@ -27,14 +27,14 @@ def manager(panel):  # noqa: F811
 
 def test_employee_own_only_and_manager_project_intersect_staff(panel):  # noqa: F811
     own, lead = employee(panel), manager(panel)
-    assert {a["tab_no"] for a in own.assignments()} == {"T0002"}
-    assert {a["tab_no"] for a in lead.assignments()} == {"T0002", "T0003"}
+    assert {a["person_id"] for a in own.assignments()} == {"T0002"}
+    assert {a["person_id"] for a in lead.assignments()} == {"T0002", "T0003"}
     assert {a["project_code"] for a in lead.assignments()} == {"TP-T02"}
     no_staff = CabinetService(
         panel.registry, Actor("РП", "Руководитель", "T0003", (("TP-T02", "1"),), ())
     )
     assert not no_staff.assignments()
-    other = next(a["id"] for a in panel.registry.rows("assignment") if a["tab_no"] == "T0001")
+    other = next(a["id"] for a in panel.registry.rows("assignment") if a["person_id"] == "T0001")
     for service in (own, lead):
         for action in (
             lambda: service.card(other, "2026-Q3", as_of="2026-09-30"),

@@ -598,7 +598,7 @@ def plan_upload(meta, state, file_hash, export_date, mode="update", sheet_name=N
                             line,
                             milestone=row["name"],
                             milestone_code=code,
-                            tab_no=individual["tab_no"],
+                            person_id=individual["person_id"],
                         )
         stage_row = next(
             (

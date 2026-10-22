@@ -10,7 +10,7 @@ XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 OVERVIEW_COLUMNS = {
     "fio": "ФИО",
-    "tab_no": "Таб. №",
+    "person_id": "№ сотр.",
     "project": "Проект",
     "queue": "Очередь",
     "stage": "Этап",
@@ -103,7 +103,7 @@ def render_registry(view, as_of, goto_employee):
     filtered = [
         r
         for r in rows
-        if (not search or search in (r["fio"] or "").lower() or search in r["tab_no"].lower())
+        if (not search or search in (r["fio"] or "").lower() or search in r["person_id"].lower())
         and (not chosen_projects or r["project"] in chosen_projects)
         and (status == "Все" or r["status"] == status.lower())
         and (category == "Все" or r["category"] == category)
@@ -112,7 +112,7 @@ def render_registry(view, as_of, goto_employee):
     ]
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Назначений", len(filtered))
-    m2.metric("Сотрудников", len({r["tab_no"] for r in filtered}))
+    m2.metric("Сотрудников", len({r["person_id"] for r in filtered}))
     m3.metric("С просроченными вехами", sum(1 for r in filtered if r["overdue_count"]))
     m4.metric("С инд. сроками", sum(1 for r in filtered if r["individual_count"]))
     st.dataframe(
@@ -174,7 +174,7 @@ def render_registry(view, as_of, goto_employee):
         type="primary",
     )
     b2.button(
-        "Карточка сотрудника", on_click=goto_employee, args=(row["tab_no"],), key="reg_open_card"
+        "Карточка сотрудника", on_click=goto_employee, args=(row["person_id"],), key="reg_open_card"
     )
 
 
