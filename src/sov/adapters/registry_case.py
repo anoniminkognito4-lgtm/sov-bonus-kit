@@ -376,7 +376,9 @@ class RegistryAdapter:
             "key_rate_history": [
                 {"date_from": r["date_from"], "rate": r["rate"]} for r in self.state["key_rate"]
             ],
-            "holidays": [r["date"] for r in self.state["holiday"]],
+            # Производственный календарь: «рабочий» — перенесённый рабочий день в выходной.
+            "holidays": [r["date"] for r in self.state["holiday"] if r["kind"] != "рабочий"],
+            "workdays": [r["date"] for r in self.state["holiday"] if r["kind"] == "рабочий"],
             "stage5_expense": (
                 {
                     "remaining": bool(expenses[0]["expense_remaining"]),

@@ -10,13 +10,16 @@ def as_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
-def pay_date(fact: str, holidays=(), params: SovParams = DEFAULT_PARAMS) -> str:
+def pay_date(fact: str, holidays=(), params: SovParams = DEFAULT_PARAMS, workdays=()) -> str:
+    """Дата выплаты; holidays — нерабочие будни, workdays — рабочие субботы и воскресенья."""
     event = as_date(fact)
     month_index = event.year * 12 + ((event.month - 1) // 3 + 1) * 3 - 1
     month_index += params.pay_months_after_quarter
     year, month = divmod(month_index, 12)
     result = date(year, month + 1, params.pay_day)
-    while result.weekday() >= 5 or result.isoformat() in holidays:
+    while (result.weekday() >= 5 and result.isoformat() not in workdays) or (
+        result.isoformat() in holidays
+    ):
         result -= timedelta(days=1)
     return result.isoformat()
 

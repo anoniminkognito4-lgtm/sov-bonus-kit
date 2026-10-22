@@ -236,7 +236,8 @@ def _calculate_employee(case, employee, params, problems):
         if not fact or not closed:
             continue
         item["pay_date"] = case.get("manual_pay_dates", {}).get(
-            milestone["name"], pay_date(closed, case.get("holidays", ()), params)
+            milestone["name"],
+            pay_date(closed, case.get("holidays", ()), params, case.get("workdays", ())),
         )
         if leave_date and closed > leave_date:
             item.update(amount=0.0, calc_status="после ухода")
@@ -350,7 +351,7 @@ def _calculate_final(case, employee, result, final_plan, params, problems):
             raw_amount=0.0,
             calc_status="сгорело",
             k_stage=0.0,
-            pay_date=pay_date(day, case.get("holidays", ()), params),
+            pay_date=pay_date(day, case.get("holidays", ()), params, case.get("workdays", ())),
         )
         result["payouts"] = [
             {
@@ -372,12 +373,15 @@ def _calculate_final(case, employee, result, final_plan, params, problems):
     if fact and closed:
         final.update(
             k_stage=stage_factor(min(0, deviation) if leave_date else deviation, params),
-            pay_date=pay_date(closed, case.get("holidays", ()), params),
+            pay_date=pay_date(closed, case.get("holidays", ()), params, case.get("workdays", ())),
             calc_status="рассчитано",
         )
         if sale:
             final.update(
-                k_stage=1.0, pay_date=pay_date(sale["date"], case.get("holidays", ()), params)
+                k_stage=1.0,
+                pay_date=pay_date(
+                    sale["date"], case.get("holidays", ()), params, case.get("workdays", ())
+                ),
             )
         factor = result["k_fin"] if is_kupk(category) else 1
         if is_kupk(category):

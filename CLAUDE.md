@@ -87,6 +87,8 @@ python3 tools/template_harness/fill_and_recalc.py --case T05   # пересчи�
 python3 tools/make_samples.py                        # пересобрать samples из кейсов
 python3 tools/make_docs_tables.py                    # обновить таблицы в docs
 uv run python tools/make_milestone_samples.py         # условные выгрузки вех samples/milestones
+uv run python tools/make_upshr_samples.py             # условная выгрузка УП ШР samples/upshr
+uv run python tools/fetch_open_data.py                # ставка ЦБ и календарь РФ (нужен интернет, один раз)
 uv run python -m sov.loaders.milestones seed <файл.xlsx> --export-date ДД.ММ.ГГГГ --apply  # вехи из командной строки
 ```
 

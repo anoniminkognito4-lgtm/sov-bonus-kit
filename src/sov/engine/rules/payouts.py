@@ -62,7 +62,7 @@ def final_parts(case: dict, employee: dict, final: dict, params: SovParams) -> l
             "pay_date": (
                 final["pay_date"]
                 if index == 0
-                else pay_date(event, case.get("holidays", ()), params)
+                else pay_date(event, case.get("holidays", ()), params, case.get("workdays", ()))
             ),
             "bonus": final["amount"] * share,
             "interest": 0.0,

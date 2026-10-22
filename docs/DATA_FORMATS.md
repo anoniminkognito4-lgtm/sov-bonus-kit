@@ -20,13 +20,14 @@
 | `key_rate` | число | ставка ЦБ по умолчанию для всех вех |
 | `key_rates` | объект | `{веха: ставка}` — средневзвешенная ставка по конкретной вехе (как вводит Группа СОВ в шаблоне) |
 | `stage5_expense` | объект | 5 этап, РП и РПС: `remaining` (осталась расходная часть), `plan_budget`, `fact_budget` |
+| `holidays`, `workdays` | списки дат | необязательно: нерабочие будни и рабочие субботы/воскресенья для даты выплаты (D-105) |
 | `employees[]` | список | сотрудники, поля ниже |
 
 Сотрудник:
 
 | Поле | Тип | Что |
 | --- | --- | --- |
-| `tab_no` | строка | условный табельный номер `T0001`… — ключ сотрудника |
+| `tab_no` | строка | идентификатор сотрудника: в реестре это `person_id` (D-101), в тестах `T0001`… |
 | `fio` | строка | условное ФИО «Тестов …» |
 | `category` | строка | `КУПК (РП/ЗРП)`, `КУПК`, `РУПК`, `МП` |
 | `role` | строка | `РП`, `ЗРП`, `РПС`, `другая` |
@@ -116,8 +117,8 @@
 | `bs_transfer.csv` | отчёт ПТО БС | project_code, quarter, share_transferred |
 | `kpi_mp.csv` | 1С, задачи KPI | tab_no, quarter, kpi |
 | `stage5_expense.csv` | ФМ, Группа СОВ | project_code, queue, stage, expense_remaining, plan_budget, fact_budget |
-| `key_rates.csv` | сайт ЦБ (здесь условно 16%) | date_from, rate |
-| `holidays.csv` | производственный календарь | date, kind (пустой образец) |
+| `key_rates.csv` | сайт ЦБ (здесь условно 16%; настоящая история — `config/key_rate_cbr.csv` из `tools/fetch_open_data.py`) | date_from, rate (доля: 0.21 = 21%) |
+| `holidays.csv` | производственный календарь (настоящий — `config/calendar_ru.csv` из `tools/fetch_open_data.py`) | date, kind: «выходной» — нерабочий будний день, «рабочий» — рабочая суббота или воскресенье (пустой образец) |
 | `redistribution.csv` | решение РФП, вносит Группа СОВ | tab_no, project_code, stage, milestone, pct, decided_by, approved_date, basis |
 | `rp_project_sets.csv` | форма фиксации набора проектов РП | tab_no, rank, project_code, queue, class, area_k_m2, stage, extra_objects, is_queue, is_logistics, approved_date, approved_by |
 
