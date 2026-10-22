@@ -47,6 +47,9 @@ class Calculation:
         return [p for p in self.problems if p["blocking"]]
 
 
+ALWAYS_SHOWN = {"LEAVE_DATE_MISSING", "LEAVE_ACTIVE_IN_1C", "DISMISSAL_DATE_MISSING"}
+
+
 def require_admin(actor):
     if actor.role != ADMIN:
         raise PermissionError("Действие доступно только Группе СОВ")
@@ -806,7 +809,13 @@ class PanelService:
                 for m in employee["milestones"]
             )
             relevant |= not case["final"].get("plan") and bool(result["problems"])
-            if relevant:
+            # Вопросы об уходе видны всегда, даже без событий в квартале (D-103).
+            shown = (
+                result["problems"]
+                if relevant
+                else [p for p in result["problems"] if p["code"] in ALWAYS_SHOWN]
+            )
+            if shown:
                 problems.extend(
                     {
                         **{k: v for k, v in p.items() if k != "tab_no"},
@@ -814,7 +823,7 @@ class PanelService:
                         "assignment_id": identifier,
                         "project_code": source["project_code"],
                     }
-                    for p in result["problems"]
+                    for p in shown
                 )
             for item in employee["milestones"]:
                 event = item.get("recognition_date") or source_ms[item["name"]].get("closed_1c")

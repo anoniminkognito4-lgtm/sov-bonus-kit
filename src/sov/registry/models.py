@@ -38,9 +38,11 @@ SCHEMAS = {
     "milestone_plan_version": "milestone_code version:i plan_date basis effective_date file_hash",
     # Натуральный ключ вехи без кода 1С: [проект, очередь 1С, этап, наименование] → код.
     "milestone_key": "natural_key milestone_code",
+    # left_1c, dismissed_1c — «Покинул проект» и «Уволен» из выгрузки УП ШР (D-103);
+    # пусто — назначение не из УП ШР.
     "assignment": (
         "id person_id project_code queue stage:i sov_type category role position date_from "
-        "date_to end_reason from_prev_stage:i "
+        "date_to end_reason from_prev_stage:i left_1c:i dismissed_1c:i "
     ),
     "assignment_load": "assignment_id date_from date_to load:f",
     "individual_date": "person_id milestone_code individual_plan basis",

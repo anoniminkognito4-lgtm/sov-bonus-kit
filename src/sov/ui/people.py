@@ -3,6 +3,7 @@
 import streamlit as st
 
 from sov.loaders.persons import QUESTIONS
+from sov.loaders.upshr import MESSAGES as UPSHR_MESSAGES
 
 
 def render_person_questions(service, preview, refresh):
@@ -89,6 +90,34 @@ def render_people(registry):
                     "Основание": a["basis"],
                 }
                 for a in aliases
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+
+
+def render_upshr_preview(preview):
+    """Сводка и вопросы выгрузки УП ШР «Проектные команды» (D-103)."""
+    stats = preview.stats
+    st.caption(
+        f"Строк: {stats.get('rows', 0)} · назначений: {stats.get('assignments', 0)} · "
+        f"новых людей: {stats.get('new_people', 0)}. Загрузка из файла не берётся: только "
+        "по правилам СОВ. «Дата окончания» — плановый срок этапа, не дата ухода."
+    )
+    problems = [p for p in preview.problems if p["code"] not in QUESTIONS]
+    if problems:
+        st.write("Проверки и вопросы")
+        st.dataframe(
+            [
+                {
+                    "Строка": p.get("line"),
+                    "Вопрос": UPSHR_MESSAGES.get(p["code"], p.get("message")),
+                    "Блокирует расчёт": "да" if p["blocking"] else "",
+                    "ФИО": p.get("fio") or "",
+                    "Было (реестр)": p.get("before") or "",
+                    "В файле": p.get("after") or "",
+                }
+                for p in problems
             ],
             hide_index=True,
             use_container_width=True,

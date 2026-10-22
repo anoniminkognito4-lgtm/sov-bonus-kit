@@ -8,6 +8,12 @@
 import re
 
 KPI_TEMPORARY = "вр. KPI (Вехи)"
+# Роль на проекте по строке справочника (CALC_RULES §9.4): нужна правилам 5 этапа и ЗРП.
+ROLES = {
+    ("БПП", "руководитель проекта"): "РП",
+    ("БПП", "заместитель руководителя проекта"): "ЗРП",
+    ("БС", "руководитель проекта строительства"): "РПС",
+}
 ACTING = re.compile(r"^(и\.\s*о\.|исполняющ\w*\s+обязанност\w*)\s*", re.IGNORECASE)
 
 
@@ -82,3 +88,10 @@ def resolve(assignment, position, ref):
         "sov_type": sov_type,
         "category": category,
     }
+
+
+def role_for(ref):
+    """РП, ЗРП, РПС или «другая» по распознанной должности (D-103)."""
+    if not ref:
+        return "другая"
+    return ROLES.get((ref["block"], key(ref["position"])), "другая")

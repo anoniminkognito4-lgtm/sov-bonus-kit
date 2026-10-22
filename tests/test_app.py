@@ -49,6 +49,7 @@ def test_every_screen_opens_with_loaded_samples(app):
         "Сотрудники",
         "Проекты",
         "Должности",
+        "Люди",
         "Проблемы",
         "Ручные решения",
         "Расчёт и закрытие",
@@ -297,3 +298,18 @@ def test_team_forms_and_positions_screen(app):
         if a["person_id"] == "T0002" and a["project_code"] == "TP-T01"
     ]
     assert added and added[0]["date_from"] == "2026-08-01"
+
+
+def test_upshr_sample_preview_and_apply(app):
+    ui, path = app
+    navigate(ui, "Загрузка")
+    ui.button(key="load_demo").click().run()
+    ui.selectbox(key="sample_file").set_value("upshr/upshr_team.xlsx").run()
+    ui.button(key="preview_upload").click().run()
+    assert not ui.exception
+    assert any("Проектные команды" in m.value for m in ui.markdown)
+    ui.button(key="apply_upload").click().run()
+    assert not ui.exception
+    assert any(e["fio"] == "Образцов Олег Олегович" for e in Registry(path).rows("employee"))
+    navigate(ui, "Люди")
+    assert ui.dataframe

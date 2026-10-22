@@ -10,7 +10,7 @@ from uuid import uuid4
 from sqlalchemy import delete, insert, select, update
 
 from sov.engine.params import params_for_quarter
-from sov.loaders import milestones
+from sov.loaders import milestones, upshr
 from sov.loaders.formats import read_source
 from sov.loaders.mapping import Unmatched, find, map_row, row_key
 from sov.registry.models import (
@@ -81,7 +81,12 @@ def _prepare(registry, path, author, connection, options=None):
         )
         options.setdefault("mode", "update")
     else:
-        kind, file_hash, rows, errors = read_source(path)
+        team = upshr.read(path)
+        if team is not None:
+            kind, errors, rows = "upshr", [], []
+            file_hash = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        else:
+            kind, file_hash, rows, errors = read_source(path)
     if kind in ("case_map", "payroll_example"):
         raise ValueError("Это файл сверки/пример выгрузки, а не источник реестра")
     original = registry.domain_state(connection)
@@ -107,6 +112,14 @@ def _prepare(registry, path, author, connection, options=None):
         )
         problems, unmatched = plan.problems, list(plan.unmatched)
         stats = {**plan.stats, "by_project": plan.by_project}
+        for line, records in plan.records:
+            try:
+                add(line, records)
+            except (ValueError, TypeError, KeyError) as error:
+                errors.append({"line": line, "message": str(error)})
+    if kind == "upshr":
+        plan = upshr.plan_upload(team, state)
+        problems, unmatched, stats = plan.problems, list(plan.unmatched), plan.stats
         for line, records in plan.records:
             try:
                 add(line, records)

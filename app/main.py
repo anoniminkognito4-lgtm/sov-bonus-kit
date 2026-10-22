@@ -24,7 +24,7 @@ from sov.ui.milestones import (
     render_project_milestones,
 )
 from sov.ui.new_calc import open_new_calc, render_hints, render_new_calc
-from sov.ui.people import render_people, render_person_questions
+from sov.ui.people import render_people, render_person_questions, render_upshr_preview
 from sov.ui.redistribution import render_redistribution
 from sov.ui.registry import render_calculator, render_registry
 from sov.ui.scenario import render_scenario
@@ -329,6 +329,7 @@ TYPE_LABELS = {
     "rp_project_set": "Нормирование РП",
     "position_ref": "Справочник должностей",
     "person_alias": "Решение о человеке",
+    "upshr": "Проектные команды (1С УП ШР)",
     "person_merge": "Тот же человек",
     "person_split": "Другой человек",
     "position_fix": "Исправления должностей",
@@ -443,7 +444,7 @@ elif page == "Загрузка":
             st.error(str(error))
     milestone_samples = sorted(
         f"milestones/{p.name}" for p in (ROOT / "samples/milestones").glob("*.*")
-    )
+    ) + sorted(f"upshr/{p.name}" for p in (ROOT / "samples/upshr").glob("*.*"))
     source_name = st.selectbox(
         "Условный образец", [*SAMPLE_ORDER, *milestone_samples], key="sample_file"
     )
@@ -469,6 +470,8 @@ elif page == "Загрузка":
         table([preview.summary], hide_index=True)
         if preview.kind == "milestone":
             render_milestone_preview(preview)
+        if preview.kind == "upshr":
+            render_upshr_preview(preview)
         render_person_questions(service, preview, refresh)
         if preview.changes:
             table(

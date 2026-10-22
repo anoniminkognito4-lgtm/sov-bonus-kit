@@ -103,11 +103,12 @@
 
 | Файл | Источник (ТЗ, раздел 5) | Колонки |
 | --- | --- | --- |
-| `hr_employees.csv` | 1С IHR | tab_no, fio, position, department, hire_date, dismissal_date, probation_end, probation_result |
+| `hr_employees.csv` | 1С IHR | tab_no (в тестах — номер в системе) или только fio, position, department, hire_date, dismissal_date, probation_end, probation_result |
 | `hr_bgb_history.csv` | 1С IHR | tab_no, bgb, date_from, date_to |
 | `projects.csv` | 1С | project_code, name, queue, blocks, is_exception, sale_date, handover_to_completion_date |
 | `stages.csv` | 1С | project_code, queue, stage, start_date, key_milestone, is_completion |
-| `assignments.csv` | 1С УП ШР | tab_no, project_code, queue, stage, sov_type, category, role, position_on_project, date_from, date_to, end_reason, load, from_prev_stage |
+| `upshr/upshr_team.xlsx` | 1С УП ШР «Проектные команды» | шапка в первых 10 строках: Проект, Очередь/строение, Мотивационный этап, ФИО, Подразделение, Должность, Дата начала, Дата окончания, Покинул проект, Уволен, Категория, Общая расчетная загрузка (D-103) |
+| `assignments.csv` | условный тестовый формат назначений | tab_no, project_code, queue, stage, sov_type, category, role, position_on_project, date_from, date_to, end_reason, load, from_prev_stage |
 | `milestones_1c.xlsx` | 1С «Мотивационные вехи» | лист «Лист для загрузки вех»: Статус, Наименование, Шаблон, Ключевая, Вид, Проект, Очередь/корпус/строение, Этап, Заказчик, Исполнитель, Плановый срок, Критерий закрытия, Фактический срок + Код проекта, Код вехи, Дата закрытия в 1С |
 | `individual_dates.csv` | 1С «Мотивационные вехи» | tab_no, project_code, stage, milestone, individual_plan, basis |
 | `npv_quarterly.csv` | 1С «Мотивационный NPV» | project_code, quarter, fm_version, npv_plan_paur, npv_forecast_paur, fub_approved_date |
@@ -122,6 +123,9 @@
 
 Замечания:
 
+- **Сотрудник** (D-101): табельного номера нет. В тестовых форматах колонка `tab_no` — это номер в системе (`person_id`). Вместо неё может быть колонка `fio` (и подсказки `department`, `position`): человек находится общей функцией сопоставления по ФИО, несопоставленное — вопрос в предпросмотре.
+- **УП ШР** (D-103): «Дата окончания» — плановый срок этапа, не дата ухода; «Общая расчетная загрузка» не загружается; «Покинул проект» / «Уволен» — «Да» / «Нет».
+
 - В `milestones_1c.xlsx` даты в формате 1С `ДД.ММ.ГГГГ`, этап словами («Четвертый этап»), статусы «Назначена» / «Выполнена» (точные значения статусов 1С уточнить). Ключевая веха — строка с «Ключевая = Да». Три последние колонки в листе шаблона отсутствуют: если в реальной выгрузке их нет, загрузчик сопоставляет по (Проект, Очередь, Этап, Наименование) и помечает это предупреждением.
 - В `assignments.csv` строка = период с постоянной загрузкой; `date_to` у ушедшего — дата ухода. ПБ при этом считается до планового окончания этапа (`CALC_RULES` §2).
 - В `npv_quarterly.csv` квартал вида `2026-Q3`. NPV на дату ухода = NPV квартала ухода; NPV после этапа = NPV квартала завершения.
@@ -131,12 +135,15 @@
 
 ## 4. Реестр: таблицы (SQLite в прототипе)
 
+Сотрудник в реестре — `person_id` (D-101). Во входе и выходе движка (§1, §2) поле по-прежнему называется `tab_no`, в нём передаётся `person_id`.
+
 Минимум для прототипа; полный список — ТЗ, раздел 4. Все таблицы с историей хранят `valid_from`, `valid_to`, `source_file_id`, `created_at`.
 
 | Таблица | Ключ | Основные поля |
 | --- | --- | --- |
-| employee | tab_no | fio, position, department, hire_date, dismissal_date, probation_end, probation_result |
-| bgb_period | tab_no, date_from | bgb, date_to |
+| employee | person_id | fio, tab_no (необязательно, ни на что не влияет), position, department, hire_date, dismissal_date, probation_end, probation_result — D-101 |
+| person_alias | fio, department | person_id, kind (`merge` — тот же человек, `split` — другой), basis; ФИО и подразделение нормализованы |
+| bgb_period | person_id, date_from | bgb, date_to |
 | project | project_code, queue | name, blocks, is_exception, sale_date, handover_date |
 | stage | project_code, queue, stage | start_date, key_milestone_code, key_milestone_name, is_completion, continues_from_prev |
 | calc_milestone | project_code, queue, stage, milestone_code | order, source (`queue` / `project`), added_by, active — набор вех калькулятора (NEW_CALC §2); `active = 0` — веха убрана решением calc_set_change |
@@ -144,26 +151,26 @@
 | milestone_plan_version | milestone_code, version | plan_date, basis, effective_date (дата выгрузки 1С), file_hash |
 | milestone_key | natural_key | milestone_code — `[проект, очередь 1С, этап, наименование]` → код вехи (MILESTONES §3.2) |
 | milestone_raw_row | id | upload_id, row_no, raw_json — строка выгрузки как есть; не предметная таблица, в снимок квартала не входит, удаляется откатом |
-| assignment | id | tab_no, project_code, queue, stage, sov_type, category, role, position, date_from, date_to, end_reason, from_prev_stage |
+| assignment | id | person_id, project_code, queue, stage, sov_type, category, role, position, date_from, date_to, end_reason, from_prev_stage, left_1c, dismissed_1c (признаки УП ШР) |
 | assignment_load | assignment_id, date_from | load, date_to |
-| individual_date | tab_no, milestone_code | individual_plan, basis |
+| individual_date | person_id, milestone_code | individual_plan, basis |
 | npv | project_code, quarter, fm_version | npv_plan_paur, npv_forecast_paur, fub_approved_date |
 | start_npv | assignment_id | npv_start, fixed_date, basis, corrections |
 | bs_share | project_code, quarter | share_transferred |
-| kpi | tab_no, quarter | kpi |
+| kpi | person_id, quarter | kpi |
 | stage5_expense | project_code, queue, stage | expense_remaining, plan_budget, fact_budget |
 | key_rate | date_from | rate |
 | holiday | date | kind |
-| redistribution | tab_no, milestone_code | pct, decided_by, approved_date, basis |
-| rp_project_set | tab_no, project_code, queue | rank, class, area_k_m2, stage, extra_objects, is_queue, is_logistics, approved_date |
+| redistribution | person_id, milestone_code | pct, decided_by, approved_date, basis |
+| rp_project_set | person_id, project_code, queue | rank, class, area_k_m2, stage, extra_objects, is_queue, is_logistics, approved_date |
 | position_ref | block, position | category, sov_type, load_row, comment — справочник должностей (D-098); файл с заголовками «Подразделение; Должность; Категория; Вид СОВ по умолчанию; …» |
 | position_fix | wrong | right — исправления в названиях должностей (`wrong;right`) |
 | project_flag | project_code, queue, date_from | is_lc_skb, basis — «ЛЦ или объект СКБ» с даты (D-099) |
 | sov_param | edition, name | value, valid_from |
 | upload | id | file_name, file_hash, type, author, uploaded_at, applied_at, rolled_back_at |
-| accrual | id | snapshot_id, tab_no, assignment_id, kind, milestone_code, part, quarter, pay_date, amount, calc_status, edition |
+| accrual | id | snapshot_id, person_id, assignment_id, kind, milestone_code, part, quarter, pay_date, amount, calc_status, edition |
 | snapshot | id | quarter, closed_at, closed_by, edition |
-| manual_decision | id | kind, tab_no, payload_json, basis, file_ref, author, created_at |
+| manual_decision | id | kind, person_id, payload_json, basis, file_ref, author, created_at |
 | audit_log | id | who, when, entity, entity_id, before_json, after_json, basis |
 
 ## 5. Файл к начислению

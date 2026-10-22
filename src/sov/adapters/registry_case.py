@@ -50,6 +50,19 @@ class RegistryAdapter:
         codes = set() if found["ref"] else {"POSITION_UNRECOGNIZED"}
         return resolve(assignment, raw, found["ref"]), codes
 
+    @staticmethod
+    def leave_issues(assignment, employee):
+        """Вопросы об уходе по признакам выгрузки УП ШР (D-103); пусто — не из УП ШР."""
+        issues = []
+        left, dismissed = assignment.get("left_1c"), assignment.get("dismissed_1c")
+        if left == 1 and not assignment["end_reason"]:
+            issues.append(("LEAVE_DATE_MISSING", True))
+        if left == 0 and not dismissed and assignment["end_reason"]:
+            issues.append(("LEAVE_ACTIVE_IN_1C", False))
+        if dismissed == 1 and not employee["dismissal_date"]:
+            issues.append(("DISMISSAL_DATE_MISSING", True))
+        return issues
+
     def rows(self, table, **fields):
         return [r for r in self.state[table] if all(r.get(k) == v for k, v in fields.items())]
 
@@ -216,6 +229,7 @@ class RegistryAdapter:
             for index in (1, 2)
         ]
         load_rows, load_source, load_issues = self.loads.for_assignment(assignment, employee)
+        load_issues = [*load_issues, *self.leave_issues(assignment, employee)]
         person = {
             "tab_no": employee["person_id"],  # поле движка: идентификатор сотрудника
             "fio": employee["fio"],
